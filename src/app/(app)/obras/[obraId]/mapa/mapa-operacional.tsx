@@ -1,0 +1,185 @@
+"use client";
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { STATUS_COLORS_UI, STATUS_LABELS_UI, STATUS_ORDER_UI, dbParaUI } from "@/lib/constants/status";
+import type { StatusUnidade } from "@/lib/types/database";
+import UnidadePainel from "./unidade-painel";
+
+type Torre = {
+  id: string;
+  nome: string;
+  qtd_pavimentos: number;
+  layout_codigos: string[];
+  ordem: number;
+};
+type Unidade = {
+  id: string;
+  torre_id: string;
+  pavimento: number;
+  codigo_unidade: string;
+  identificador: string;
+  status: StatusUnidade;
+  cliente_atual_id: string | null;
+  observacoes?: string | null;
+};
+type ClienteMin = { id: string; nome: string; telefone: string | null; email: string | null };
+
+export default function MapaOperacional({
+  obraId, torres, unidadesIniciais, clientes
+}: {
+  obraId: string;
+  torres: Torre[];
+  unidadesIniciais: Unidade[];
+  clientes: ClienteMin[];
+}) {
+  const [unidades, setUnidades] = useState<Unidade[]>(unidadesIniciais);
+  const [selecionada, setSelecionada] = useState<Unidade | null>(null);
+
+  // Realtime: ouve mudancas em unidades desta obra
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`unidades:${obraId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "unidades", filter: `obra_id=eq.${obraId}` },
+        (payload) => {
+          const nova = payload.new as Unidade;
+          setUnidades((prev) => prev.map((u) => (u.id === nova.id ? { ...u, ...nova } : u)));
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [obraId]);
+
+  // Garante que ao selecionar uma unidade, ela reflita o ultimo estado
+  const selecionadaAtual = selecionada
+    ? unidades.find((u) => u.id === selecionada.id) ?? selecionada
+    : null;
+
+  // { torre_id -> { pavimento -> { codigo -> unidade } } }
+  const porTorrePavCodigo = useMemo(() => {
+    const m = new Map<string, Map<number, Map<string, Unidade>>>();
+    for (const u of unidades) {
+      if (!m.has(u.torre_id)) m.set(u.torre_id, new Map());
+      const t = m.get(u.torre_id)!;
+      if (!t.has(u.pavimento)) t.set(u.pavimento, new Map());
+      t.get(u.pavimento)!.set(u.codigo_unidade, u);
+    }
+    return m;
+  }, [unidades]);
+
+  // Contagem por status UI (legenda)
+  const contagem = useMemo(() => {
+    const c = Object.fromEntries(STATUS_ORDER_UI.map((s) => [s, 0])) as Record<string, number>;
+    for (const u of unidades) c[dbParaUI(u.status)]++;
+    return c;
+  }, [unidades]);
+
+  const torreSelecionada = selecionadaAtual
+    ? torres.find((t) => t.id === selecionadaAtual.torre_id)
+    : undefined;
+
+  return (
+    <div className="space-y-6">
+      {/* Legenda — chips clean */}
+      <div className="flex flex-wrap gap-2">
+        {STATUS_ORDER_UI.map((s) => (
+          <span
+            key={s}
+            className={`text-xs px-2 py-1 rounded-md font-medium ${STATUS_COLORS_UI[s].chip}`}
+            title={STATUS_LABELS_UI[s]}
+          >
+            {STATUS_LABELS_UI[s]} <span className="opacity-70">· {contagem[s] ?? 0}</span>
+          </span>
+        ))}
+      </div>
+
+      {/* Torres */}
+      <div className="grid gap-6">
+        {torres.map((t) => {
+          const pavs = Array.from({ length: t.qtd_pavimentos }, (_, i) => t.qtd_pavimentos - i);
+          return (
+            <section key={t.id} className="bg-white border rounded-xl p-4 shadow-sm overflow-x-auto">
+              <header className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-semibold tracking-tight">Torre {t.nome}</h2>
+                <span className="text-xs text-gray-500">
+                  {t.qtd_pavimentos} pavs × {t.layout_codigos.length} unidades = {t.qtd_pavimentos * t.layout_codigos.length}
+                </span>
+              </header>
+              <div className="inline-block min-w-full">
+                <div
+                  className="grid gap-y-0.5"
+                  style={{ gridTemplateColumns: `50px repeat(${t.layout_codigos.length}, minmax(58px, 1fr))` }}
+                >
+                  <div></div>
+                  {t.layout_codigos.map((c) => (
+                    <div key={c} className="text-[11px] font-semibold text-center text-gray-400 pb-1">{c}</div>
+                  ))}
+                  {pavs.map((pav) => (
+                    <RowPavimento
+                      key={pav}
+                      torre={t}
+                      pavimento={pav}
+                      unidadesDoPav={porTorrePavCodigo.get(t.id)?.get(pav)}
+                      onClick={(u) => setSelecionada(u)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      {selecionadaAtual && (
+        <UnidadePainel
+          unidade={selecionadaAtual}
+          torreNome={torreSelecionada?.nome}
+          obraId={obraId}
+          clientes={clientes}
+          onClose={() => setSelecionada(null)}
+          onChanged={(novo) =>
+            setUnidades((prev) => prev.map((u) => (u.id === novo.id ? novo : u)))
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+function RowPavimento({
+  torre, pavimento, unidadesDoPav, onClick
+}: {
+  torre: Torre;
+  pavimento: number;
+  unidadesDoPav: Map<string, Unidade> | undefined;
+  onClick: (u: Unidade) => void;
+}) {
+  return (
+    <>
+      <div className="text-xs font-medium text-gray-500 flex items-center justify-end pr-2">
+        {String(pavimento).padStart(2, "0")}
+      </div>
+      {torre.layout_codigos.map((codigo) => {
+        const u = unidadesDoPav?.get(codigo);
+        if (!u) {
+          return <div key={codigo} className="m-0.5 h-9 rounded bg-gray-100 border border-dashed border-gray-300" />;
+        }
+        const ui = dbParaUI(u.status);
+        const c = STATUS_COLORS_UI[ui];
+        return (
+          <button
+            key={codigo}
+            type="button"
+            onClick={() => onClick(u)}
+            className={`m-0.5 h-9 rounded text-[11px] font-semibold flex items-center justify-center transition active:scale-95 hover:brightness-110 hover:ring-2 ring-offset-1 ${c.bg} ${c.text} ${c.ring}`}
+            title={`${u.identificador} — ${STATUS_LABELS_UI[ui]}`}
+          >
+            {u.identificador}
+          </button>
+        );
+      })}
+    </>
+  );
+}
