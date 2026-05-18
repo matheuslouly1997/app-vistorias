@@ -1,7 +1,8 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/toast";
+import { createClient } from "@/lib/supabase/client";
 import { criarCliente, editarCliente, excluirCliente, desvincularClienteUnidade } from "./actions";
 
 type Cliente = {
@@ -30,7 +31,10 @@ type Agenda = {
 };
 
 export default function ClientesUI({
-  obraId, clientes, unidades, agendas
+  obraId,
+  clientes: clientesIniciais,
+  unidades: unidadesIniciais,
+  agendas: agendasIniciais,
 }: {
   obraId: string;
   clientes: Cliente[];
@@ -43,6 +47,103 @@ export default function ClientesUI({
   const [selecionado, setSelecionado] = useState<Cliente | null>(null);
   const [busca, setBusca] = useState("");
   const [novoAberto, setNovoAberto] = useState(false);
+
+  // Estado local: sincronizado com props (router.refresh) e realtime
+  const [clientes, setClientes] = useState<Cliente[]>(clientesIniciais);
+  const [unidades, setUnidades] = useState<Unidade[]>(unidadesIniciais);
+  const [agendas, setAgendas] = useState<Agenda[]>(agendasIniciais);
+
+  // Sincroniza quando router.refresh() retorna novos dados do servidor
+  useEffect(() => { setClientes(clientesIniciais); }, [clientesIniciais]);
+  useEffect(() => { setUnidades(unidadesIniciais); }, [unidadesIniciais]);
+  useEffect(() => { setAgendas(agendasIniciais); }, [agendasIniciais]);
+
+  // Realtime: clientes e unidades desta obra
+  useEffect(() => {
+    const supabase = createClient();
+
+    // Canal para clientes
+    const chCli = supabase
+      .channel(`clientes_obra_${obraId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const novo = p.new as Cliente;
+          setClientes((prev) =>
+            prev.some((c) => c.id === novo.id)
+              ? prev
+              : [...prev, novo].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const atualizado = p.new as Cliente;
+          setClientes((prev) =>
+            prev.map((c) => (c.id === atualizado.id ? { ...c, ...atualizado } : c))
+          );
+          // Atualiza painel aberto se for o mesmo cliente
+          setSelecionado((sel) =>
+            sel?.id === atualizado.id ? { ...sel, ...atualizado } : sel
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const id = (p.old as Partial<Cliente>).id;
+          if (id) {
+            setClientes((prev) => prev.filter((c) => c.id !== id));
+            setSelecionado((sel) => (sel?.id === id ? null : sel));
+          }
+        }
+      )
+      .subscribe();
+
+    // Canal para unidades (vinculação de cliente_atual_id)
+    const chUn = supabase
+      .channel(`unidades_clientes_obra_${obraId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "unidades", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const nova = p.new as Unidade;
+          setUnidades((prev) =>
+            prev.map((u) => (u.id === nova.id ? { ...u, ...nova } : u))
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "agenda", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const nova = p.new as Agenda;
+          setAgendas((prev) =>
+            prev.some((a) => a.id === nova.id) ? prev : [...prev, nova]
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "agenda", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const atualizada = p.new as Agenda;
+          setAgendas((prev) =>
+            prev.map((a) => (a.id === atualizada.id ? { ...a, ...atualizada } : a))
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(chCli);
+      supabase.removeChannel(chUn);
+    };
+  }, [obraId]);
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();

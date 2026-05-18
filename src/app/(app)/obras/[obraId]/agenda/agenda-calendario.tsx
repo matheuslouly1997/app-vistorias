@@ -1,7 +1,8 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/toast";
+import { createClient } from "@/lib/supabase/client";
 import {
   agendarVistoria, concluirVistoria, cancelarAgenda,
   editarHorarioAgenda, trocarClienteAgenda
@@ -93,7 +94,11 @@ function corAgenda(a: Agenda): { chip: string; barra: string; label: string } {
  * Componente principal
  * ============================================================ */
 export default function AgendaCalendario({
-  obraId, agendaInicial, unidades, unidadesAgendaveis, clientes
+  obraId,
+  agendaInicial,
+  unidades,
+  unidadesAgendaveis,
+  clientes,
 }: {
   obraId: string;
   agendaInicial: Agenda[];
@@ -111,6 +116,60 @@ export default function AgendaCalendario({
   const [busca, setBusca] = useState("");
   const [selecionada, setSelecionada] = useState<Agenda | null>(null);
   const [novaAberto, setNovaAberto] = useState(false);
+
+  // Estado local: inicializado com dados do servidor
+  const [agenda, setAgenda] = useState<Agenda[]>(agendaInicial);
+
+  // Sincroniza quando router.refresh() retorna novos dados do servidor
+  useEffect(() => { setAgenda(agendaInicial); }, [agendaInicial]);
+
+  // Realtime: mantém agenda atualizada para todos os usuários sem refresh manual
+  useEffect(() => {
+    const supabase = createClient();
+    const ch = supabase
+      .channel(`agenda_obra_${obraId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "agenda", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const nova = p.new as Agenda;
+          setAgenda((prev) =>
+            prev.some((a) => a.id === nova.id)
+              ? prev
+              : [...prev, nova].sort(
+                  (a, b) => +new Date(a.data_agendada) - +new Date(b.data_agendada)
+                )
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "agenda", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const atualizada = p.new as Agenda;
+          setAgenda((prev) =>
+            prev.map((a) => (a.id === atualizada.id ? { ...a, ...atualizada } : a))
+          );
+          // Atualiza painel aberto se for a mesma agenda
+          setSelecionada((sel) =>
+            sel && sel.id === atualizada.id ? { ...sel, ...atualizada } : sel
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "agenda", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const id = (p.old as Partial<Agenda>).id;
+          if (id) {
+            setAgenda((prev) => prev.filter((a) => a.id !== id));
+            setSelecionada((sel) => (sel?.id === id ? null : sel));
+          }
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [obraId]);
 
   const unidadeMap = useMemo(() => new Map(unidades.map((u) => [u.id, u])), [unidades]);
   const clienteMap = useMemo(() => new Map(clientes.map((c) => [c.id, c])), [clientes]);
@@ -133,7 +192,7 @@ export default function AgendaCalendario({
   // Filtro
   const agendaFiltrada = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return agendaInicial.filter((a) => {
+    return agenda.filter((a) => {
       const d = new Date(a.data_agendada);
       if (d < range.ini || d > range.fim) return false;
 
@@ -163,7 +222,7 @@ export default function AgendaCalendario({
       }
       return true;
     });
-  }, [agendaInicial, range, filtroStatus, busca, unidadeMap, clienteMap]);
+  }, [agenda, range, filtroStatus, busca, unidadeMap, clienteMap]);
 
   function navegar(delta: number) {
     if (view === "dia") setDataRef((d) => addDays(d, delta));

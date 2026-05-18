@@ -25,7 +25,10 @@ type Unidade = {
 type ClienteMin = { id: string; nome: string; telefone: string | null; email: string | null };
 
 export default function MapaOperacional({
-  obraId, torres, unidadesIniciais, clientes
+  obraId,
+  torres,
+  unidadesIniciais,
+  clientes: clientesIniciais,
 }: {
   obraId: string;
   torres: Torre[];
@@ -33,13 +36,24 @@ export default function MapaOperacional({
   clientes: ClienteMin[];
 }) {
   const [unidades, setUnidades] = useState<Unidade[]>(unidadesIniciais);
+  const [clientes, setClientes] = useState<ClienteMin[]>(clientesIniciais);
   const [selecionada, setSelecionada] = useState<Unidade | null>(null);
 
-  // Realtime: ouve mudancas em unidades desta obra
+  // Realtime: unidades — INSERT, UPDATE e DELETE
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
-      .channel(`unidades:${obraId}`)
+      .channel(`mapa_unidades_${obraId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "unidades", filter: `obra_id=eq.${obraId}` },
+        (payload) => {
+          const nova = payload.new as Unidade;
+          setUnidades((prev) =>
+            prev.some((u) => u.id === nova.id) ? prev : [...prev, nova]
+          );
+        }
+      )
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "unidades", filter: `obra_id=eq.${obraId}` },
@@ -48,8 +62,56 @@ export default function MapaOperacional({
           setUnidades((prev) => prev.map((u) => (u.id === nova.id ? { ...u, ...nova } : u)));
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "unidades", filter: `obra_id=eq.${obraId}` },
+        (payload) => {
+          const id = (payload.old as Partial<Unidade>).id;
+          if (id) {
+            setUnidades((prev) => prev.filter((u) => u.id !== id));
+            setSelecionada((sel) => (sel?.id === id ? null : sel));
+          }
+        }
+      )
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    // Realtime: clientes — INSERT e UPDATE (para o dropdown do painel)
+    const chCli = supabase
+      .channel(`mapa_clientes_${obraId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (payload) => {
+          const novo = payload.new as ClienteMin;
+          setClientes((prev) =>
+            prev.some((c) => c.id === novo.id) ? prev : [...prev, novo]
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (payload) => {
+          const atualizado = payload.new as ClienteMin;
+          setClientes((prev) =>
+            prev.map((c) => (c.id === atualizado.id ? { ...c, ...atualizado } : c))
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (payload) => {
+          const id = (payload.old as Partial<ClienteMin>).id;
+          if (id) setClientes((prev) => prev.filter((c) => c.id !== id));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      supabase.removeChannel(chCli);
+    };
   }, [obraId]);
 
   // Garante que ao selecionar uma unidade, ela reflita o ultimo estado
