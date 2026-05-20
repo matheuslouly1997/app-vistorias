@@ -36,8 +36,9 @@ export async function agendarVistoria(formData: FormData) {
       return { erro: "1a vistoria so para unidades em finalizada_obra." };
     novoStatus = "agendado";
   } else if (tipo === "revistoria") {
-    if (u.status !== "reprovada")
-      return { erro: "Revistoria so para unidades reprovadas." };
+    // Aceita reprovada (fluxo antigo) ou pronta_revistoria (fluxo novo pos-reprovacao)
+    if (u.status !== "reprovada" && u.status !== "pronta_revistoria")
+      return { erro: "Revistoria so para unidades reprovadas ou prontas para revistoria." };
     novoStatus = "revistoria";
   } else if (tipo !== "vistoria_extra") {
     return { erro: "Tipo invalido." };
@@ -127,7 +128,20 @@ export async function cancelarAgenda(agendaId: string) {
   // Reverte status
   let statusRevert: StatusUnidade | null = null;
   if (ag.tipo === "vistoria_1a") statusRevert = "finalizada_obra";
-  else if (ag.tipo === "revistoria") statusRevert = "reprovada";
+  else if (ag.tipo === "revistoria") {
+    // Tenta reverter para o status anterior via historico
+    const { data: hist } = await supabase
+      .from("historico_status")
+      .select("status_anterior")
+      .eq("unidade_id", ag.unidade_id)
+      .not("status_anterior", "is", null)
+      .order("alterado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const anterior = hist?.status_anterior as string | null;
+    // Se veio de pronta_revistoria, volta para la; senao volta para reprovada (fluxo antigo)
+    statusRevert = (anterior === "pronta_revistoria" ? "pronta_revistoria" : "reprovada") as import("@/lib/types/database").StatusUnidade;
+  }
 
   const { error: errAg } = await supabase
     .from("agenda")

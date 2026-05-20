@@ -11,27 +11,29 @@ export async function criarCliente(formData: FormData) {
   const telefone = String(formData.get("telefone") ?? "").trim() || null;
   const observacoes = String(formData.get("observacoes") ?? "").trim() || null;
   let unidades_ids: string[] = [];
-  try {
-    unidades_ids = JSON.parse(String(formData.get("unidades_ids") ?? "[]"));
-  } catch { unidades_ids = []; }
+  try { unidades_ids = JSON.parse(String(formData.get("unidades_ids") ?? "[]")); }
+  catch { unidades_ids = []; }
 
   if (!obra_id || !nome) return { erro: "Informe pelo menos o nome." };
 
+  if (unidades_ids.length > 0) {
+    const { data: ocupadas } = await supabase
+      .from("unidades").select("identificador, cliente_atual_id")
+      .in("id", unidades_ids).eq("obra_id", obra_id).not("cliente_atual_id", "is", null);
+    if (ocupadas && ocupadas.length > 0) {
+      const ids = ocupadas.map((u: any) => u.identificador).join(", ");
+      return { erro: `Esta(s) unidade(s) ja esta(ao) vinculada(s) a outro cliente: ${ids}. Desvincule antes.` };
+    }
+  }
+
   const { data: novo, error } = await supabase.from("clientes")
-    .insert({ obra_id, nome, cpf, email, telefone, observacoes })
-    .select("id")
-    .single();
+    .insert({ obra_id, nome, cpf, email, telefone, observacoes }).select("id").single();
   if (error) return { erro: error.message };
 
   if (novo && unidades_ids.length > 0) {
-    const { error: errVinc } = await supabase
-      .from("unidades")
-      .update({ cliente_atual_id: novo.id })
-      .in("id", unidades_ids)
-      .eq("obra_id", obra_id);
-    if (errVinc) {
-      return { erro: `Cliente criado, mas falha ao vincular unidades: ${errVinc.message}` };
-    }
+    const { error: errVinc } = await supabase.from("unidades")
+      .update({ cliente_atual_id: novo.id }).in("id", unidades_ids).eq("obra_id", obra_id);
+    if (errVinc) return { erro: `Cliente criado, mas falha ao vincular unidades: ${errVinc.message}` };
   }
 
   revalidatePath(`/obras/${obra_id}/clientes`);
@@ -40,22 +42,18 @@ export async function criarCliente(formData: FormData) {
 }
 
 export async function editarCliente(input: {
-  id: string; obra_id: string;
-  nome: string; cpf?: string | null; email?: string | null;
-  telefone?: string | null; observacoes?: string | null;
+  id: string; obra_id: string; nome: string;
+  cpf?: string | null; email?: string | null; telefone?: string | null; observacoes?: string | null;
 }) {
   const supabase = createClient();
   if (!input.id || !input.nome?.trim()) return { erro: "Informe pelo menos o nome." };
-  const { error } = await supabase
-    .from("clientes")
-    .update({
-      nome: input.nome.trim(),
-      cpf: input.cpf?.trim() || null,
-      email: input.email?.trim() || null,
-      telefone: input.telefone?.trim() || null,
-      observacoes: input.observacoes?.trim() || null
-    })
-    .eq("id", input.id);
+  const { error } = await supabase.from("clientes").update({
+    nome: input.nome.trim(),
+    cpf: input.cpf?.trim() || null,
+    email: input.email?.trim() || null,
+    telefone: input.telefone?.trim() || null,
+    observacoes: input.observacoes?.trim() || null
+  }).eq("id", input.id);
   if (error) return { erro: error.message };
   revalidatePath(`/obras/${input.obra_id}/clientes`);
   return { ok: true };
@@ -63,11 +61,40 @@ export async function editarCliente(input: {
 
 export async function desvincularClienteUnidade(unidadeId: string, obraId: string) {
   const supabase = createClient();
-  const { error } = await supabase
-    .from("unidades")
-    .update({ cliente_atual_id: null })
-    .eq("id", unidadeId);
+  const { error } = await supabase.from("unidades").update({ cliente_atual_id: null }).eq("id", unidadeId);
   if (error) return { erro: error.message };
+  revalidatePath(`/obras/${obraId}/clientes`);
+  revalidatePath(`/obras/${obraId}/mapa`);
+  return { ok: true };
+}
+
+export async function vincularClienteUnidade(input: {
+  clienteId: string; novaUnidadeId: string | null;
+  antigaUnidadeId: string | null; obraId: string;
+}): Promise<{ ok?: true; erro?: string }> {
+  const supabase = createClient();
+  const { clienteId, novaUnidadeId, antigaUnidadeId, obraId } = input;
+
+  if (novaUnidadeId === antigaUnidadeId) return { ok: true };
+
+  if (novaUnidadeId) {
+    const { data: nova } = await supabase.from("unidades")
+      .select("identificador, cliente_atual_id").eq("id", novaUnidadeId).eq("obra_id", obraId).maybeSingle();
+    if (!nova) return { erro: "Unidade nao encontrada nesta obra." };
+    if (nova.cliente_atual_id && nova.cliente_atual_id !== clienteId)
+      return { erro: `A unidade ${nova.identificador} ja esta vinculada a outro cliente. Desvincule antes.` };
+  }
+
+  if (antigaUnidadeId) {
+    const { error } = await supabase.from("unidades").update({ cliente_atual_id: null }).eq("id", antigaUnidadeId);
+    if (error) return { erro: `Falha ao desvincular unidade anterior: ${error.message}` };
+  }
+
+  if (novaUnidadeId) {
+    const { error } = await supabase.from("unidades").update({ cliente_atual_id: clienteId }).eq("id", novaUnidadeId);
+    if (error) return { erro: `Falha ao vincular nova unidade: ${error.message}` };
+  }
+
   revalidatePath(`/obras/${obraId}/clientes`);
   revalidatePath(`/obras/${obraId}/mapa`);
   return { ok: true };
@@ -76,23 +103,15 @@ export async function desvincularClienteUnidade(unidadeId: string, obraId: strin
 export async function excluirCliente(id: string, obra_id: string) {
   const supabase = createClient();
 
-  const { error: e1 } = await supabase
-    .from("agenda")
+  const { error: e1 } = await supabase.from("agenda")
     .update({ status_agenda: "cancelada", observacoes: "cancelada por exclusao do cliente" })
-    .eq("cliente_id", id)
-    .eq("status_agenda", "agendada");
+    .eq("cliente_id", id).eq("status_agenda", "agendada");
   if (e1) return { erro: `Falha ao cancelar agendas ativas: ${e1.message}` };
 
-  const { error: e2 } = await supabase
-    .from("agenda")
-    .update({ cliente_id: null })
-    .eq("cliente_id", id);
+  const { error: e2 } = await supabase.from("agenda").update({ cliente_id: null }).eq("cliente_id", id);
   if (e2) return { erro: `Falha ao remover vinculo das agendas: ${e2.message}` };
 
-  const { error: e3 } = await supabase
-    .from("unidades")
-    .update({ cliente_atual_id: null })
-    .eq("cliente_atual_id", id);
+  const { error: e3 } = await supabase.from("unidades").update({ cliente_atual_id: null }).eq("cliente_atual_id", id);
   if (e3) return { erro: `Falha ao desvincular unidades: ${e3.message}` };
 
   const { error: e4 } = await supabase.from("clientes").delete().eq("id", id);
