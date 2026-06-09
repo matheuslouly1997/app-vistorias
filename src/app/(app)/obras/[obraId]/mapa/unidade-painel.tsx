@@ -524,20 +524,24 @@ function TermosSection({ unidadeId, termos, agendas, somenteLeitura = false, onA
   const [uploading, setUploading] = useState(false);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [agendaId, setAgendaId] = useState<string>("");
+  const [resultadoManual, setResultadoManual] = useState<"aprovacao" | "reprovacao">("reprovacao");
 
   const agendasConcluidas = agendas.filter(
     (a) => a.status_agenda === "concluida" && a.resultado && a.resultado !== "pendente"
   );
-  const agendasSemTermo = agendasConcluidas.filter(
-    (a) => !termos.some((t) => t.agenda_id === a.id)
-  );
-  const agendaSelecionada = agendasConcluidas.find((a) => a.id === agendaId) ?? agendasSemTermo[0];
+  const agendaSelecionada = agendasConcluidas.find((a) => a.id === agendaId);
+  const temAgenda = agendasConcluidas.length > 0;
 
   function abrirForm() {
-    setAgendaId(agendasSemTermo[0]?.id ?? "");
+    const primeira = agendasConcluidas[0];
+    setAgendaId(primeira?.id ?? "");
     setArquivo(null);
     setAnexando(true);
   }
+
+  const resultadoFinal: "aprovacao" | "reprovacao" = agendaSelecionada
+    ? (agendaSelecionada.resultado === "aprovada" ? "aprovacao" : "reprovacao")
+    : resultadoManual;
 
   async function handleUpload() {
     if (!arquivo) return;
@@ -548,11 +552,10 @@ function TermosSection({ unidadeId, termos, agendas, somenteLeitura = false, onA
       const path = `${unidadeId}/${Date.now()}.${ext}`;
       const { error: upErr } = await supabase.storage.from("termos-unidade").upload(path, arquivo);
       if (upErr) { toast.erro(upErr.message); return; }
-      const resultado = agendaSelecionada?.resultado === "aprovada" ? "aprovacao" : "reprovacao";
       const r = await salvarTermo({
         unidadeId,
         agendaId: agendaSelecionada?.id ?? null,
-        resultado,
+        resultado: resultadoFinal,
         arquivoPath: path,
       });
       if (r.erro) {
@@ -624,7 +627,7 @@ function TermosSection({ unidadeId, termos, agendas, somenteLeitura = false, onA
         </ul>
       )}
 
-      {agendasSemTermo.length > 0 && !anexando && !somenteLeitura && (
+      {!anexando && !somenteLeitura && (
         <button
           onClick={abrirForm}
           className="w-full text-xs px-3 py-2 rounded border border-dashed border-gray-400 text-gray-700 hover:bg-gray-50">
@@ -636,26 +639,45 @@ function TermosSection({ unidadeId, termos, agendas, somenteLeitura = false, onA
         <div className="border rounded-lg p-3 space-y-2 bg-gray-50">
           <div className="text-xs font-medium text-gray-700">Anexar Termo de Recebimento</div>
 
-          {agendasSemTermo.length > 1 && (
+          {temAgenda ? (
+            <>
+              <select
+                value={agendaId}
+                onChange={(e) => setAgendaId(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm bg-white">
+                <option value="">— sem vistoria vinculada —</option>
+                {agendasConcluidas.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {new Date(a.data_agendada).toLocaleString("pt-BR")} — {a.tipo} — {a.resultado}
+                  </option>
+                ))}
+              </select>
+              {agendaSelecionada && (
+                <div className="text-xs text-gray-600">
+                  Resultado:{" "}
+                  <span className={agendaSelecionada.resultado === "aprovada" ? "text-emerald-700 font-medium" : "text-red-700 font-medium"}>
+                    {agendaSelecionada.resultado === "aprovada" ? "Aprovada" : "Reprovada"}
+                  </span>
+                </div>
+              )}
+              {!agendaSelecionada && (
+                <select
+                  value={resultadoManual}
+                  onChange={(e) => setResultadoManual(e.target.value as "aprovacao" | "reprovacao")}
+                  className="w-full border rounded px-3 py-2 text-sm bg-white">
+                  <option value="reprovacao">Reprovacao</option>
+                  <option value="aprovacao">Aprovacao</option>
+                </select>
+              )}
+            </>
+          ) : (
             <select
-              value={agendaId}
-              onChange={(e) => setAgendaId(e.target.value)}
+              value={resultadoManual}
+              onChange={(e) => setResultadoManual(e.target.value as "aprovacao" | "reprovacao")}
               className="w-full border rounded px-3 py-2 text-sm bg-white">
-              {agendasSemTermo.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {new Date(a.data_agendada).toLocaleString("pt-BR")} — {a.tipo} — {a.resultado}
-                </option>
-              ))}
+              <option value="reprovacao">Reprovacao</option>
+              <option value="aprovacao">Aprovacao</option>
             </select>
-          )}
-
-          {agendaSelecionada && (
-            <div className="text-xs text-gray-600">
-              Vistoria: {new Date(agendaSelecionada.data_agendada).toLocaleString("pt-BR")} · Resultado:{" "}
-              <span className={agendaSelecionada.resultado === "aprovada" ? "text-emerald-700 font-medium" : "text-red-700 font-medium"}>
-                {agendaSelecionada.resultado === "aprovada" ? "Aprovada" : "Reprovada"}
-              </span>
-            </div>
           )}
 
           <input
