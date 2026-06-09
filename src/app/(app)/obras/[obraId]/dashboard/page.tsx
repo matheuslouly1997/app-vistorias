@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import DashboardUI from "./dashboard-ui";
+import DashboardRealtime from "./dashboard-realtime";
 
 export const dynamic = "force-dynamic";
 
@@ -37,12 +38,15 @@ export default async function DashboardPage({ params }: { params: { obraId: stri
   ]);
 
   return (
-    <DashboardUI
-      central={(central ?? null) as any}
-      contagensStatus={contagensStatus ?? []}
-      agendasHoje={agendasHoje ?? []}
-      historicoHoje={histHoje ?? []}
-      historico8semanas={hist8sem ?? []}
-    />
+    <>
+      <DashboardRealtime obraId={params.obraId} />
+      <DashboardUI
+        central={(central ?? null) as any}
+        contagensStatus={contagensStatus ?? []}
+        agendasHoje={agendasHoje ?? []}
+        historicoHoje={histHoje ?? []}
+        historico8semanas={hist8sem ?? []}
+      />
+    </>
   );
 }

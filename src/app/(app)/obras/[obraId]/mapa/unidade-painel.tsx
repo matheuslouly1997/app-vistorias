@@ -3,16 +3,32 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   STATUS_COLORS_UI, STATUS_LABELS_UI, ACAO_LABELS, ACAO_COR,
+  STATUS_LABELS, STATUS_ORDER,
   acoesPermitidas, dbParaUI, type AcaoUnidade
 } from "@/lib/constants/status";
-import type { StatusUnidade, HistoricoStatus, Cliente, Agenda } from "@/lib/types/database";
+import type { StatusUnidade, HistoricoStatus, Cliente, Agenda, TermoUnidade } from "@/lib/types/database";
+import { salvarTermo, excluirTermo } from "./termos-actions";
 import { useToast } from "@/components/toast";
 import {
   aprovarUnidade, reprovarUnidade, reagendarUnidade, marcarVistoria,
   marcarEntregue, liberarParaVistoria, marcarEmCorrecao, voltarEmObra,
   atualizarObservacoesUnidade, desfazerUltimaAlteracao, resetarUnidade,
   enviarParaCorrecao, liberarParaRevistoria, agendarRevistoria,
+  alterarEtapaManualmente, reverterParaEvento,
 } from "./actions";
+
+// Ordem operacional do fluxo (do mais "obra" ao mais "entregue") usada
+// para detectar regressao e exigir motivo.
+const ORDEM_OPERACIONAL: StatusUnidade[] = [
+  "em_obra", "em_correcao", "finalizada_obra", "agendado",
+  "reprovada", "em_correcao_pos_reprovacao", "pronta_revistoria", "revistoria",
+  "aprovada_1a", "aprovada_2a_mais", "entregue",
+];
+const ordemDe = (s: StatusUnidade) => ORDEM_OPERACIONAL.indexOf(s);
+const ehRegressao = (atual: StatusUnidade, alvo: StatusUnidade) =>
+  ordemDe(alvo) >= 0 && ordemDe(atual) >= 0 && ordemDe(alvo) < ordemDe(atual);
+
+import { formatarUnidade } from "@/lib/format/unidade";
 
 type Unidade = {
   id: string; torre_id: string; pavimento: number; codigo_unidade: string;
@@ -22,19 +38,23 @@ type Unidade = {
 type Props = {
   unidade: Unidade; torreNome?: string; obraId: string;
   clientes: Pick<Cliente, "id" | "nome" | "telefone" | "email">[];
+  somenteLeitura?: boolean;
   onClose: () => void; onChanged: (u: Unidade) => void;
 };
 type FormAcaoTipo = "marcar_vistoria" | "reagendar" | "agendar_revistoria";
 
-export default function UnidadePainel({ unidade, torreNome, obraId, clientes, onClose, onChanged }: Props) {
+export default function UnidadePainel({ unidade, torreNome, obraId, clientes, somenteLeitura = false, onClose, onChanged }: Props) {
   const toast = useToast();
   const [pending, start] = useTransition();
   const [historico, setHistorico] = useState<HistoricoStatus[] | null>(null);
   const [agendas, setAgendas] = useState<Agenda[] | null>(null);
+  const [termos, setTermos] = useState<TermoUnidade[] | null>(null);
   const [obs, setObs] = useState(unidade.observacoes ?? "");
   const [obsDirty, setObsDirty] = useState(false);
   const [formAcao, setFormAcao] = useState<null | FormAcaoTipo>(null);
   const [confirmarReset, setConfirmarReset] = useState(false);
+  const [motivoReset, setMotivoReset] = useState("");
+  const [modalEtapa, setModalEtapa] = useState(false);
 
   useEffect(() => { setObs(unidade.observacoes ?? ""); setObsDirty(false); }, [unidade.id, unidade.observacoes]);
 
@@ -42,13 +62,40 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
     let alive = true;
     (async () => {
       const supabase = createClient();
-      const [{ data: h }, { data: a }] = await Promise.all([
+      const [{ data: h }, { data: a }, { data: t }] = await Promise.all([
         supabase.from("historico_status").select("*").eq("unidade_id", unidade.id).order("alterado_em", { ascending: false }),
-        supabase.from("agenda").select("*").eq("unidade_id", unidade.id).order("data_agendada", { ascending: false })
+        supabase.from("agenda").select("*").eq("unidade_id", unidade.id).order("data_agendada", { ascending: false }),
+        supabase.from("termos_unidade").select("*").eq("unidade_id", unidade.id).order("anexado_em", { ascending: false })
       ]);
-      if (alive) { setHistorico(h ?? []); setAgendas(a ?? []); }
+      if (alive) { setHistorico(h ?? []); setAgendas(a ?? []); setTermos(t ?? []); }
     })();
     return () => { alive = false; };
+  }, [unidade.id]);
+
+  // Realtime: mantem timeline (historico e agenda) sincronizada enquanto
+  // o painel esta aberto, para refletir mudancas feitas em outras telas.
+  useEffect(() => {
+    const supabase = createClient();
+    const ch = supabase
+      .channel(`painel_unidade_${unidade.id}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "historico_status", filter: `unidade_id=eq.${unidade.id}` },
+        async () => {
+          const { data: h } = await supabase.from("historico_status")
+            .select("*").eq("unidade_id", unidade.id)
+            .order("alterado_em", { ascending: false });
+          setHistorico(h ?? []);
+        })
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "agenda", filter: `unidade_id=eq.${unidade.id}` },
+        async () => {
+          const { data: a } = await supabase.from("agenda")
+            .select("*").eq("unidade_id", unidade.id)
+            .order("data_agendada", { ascending: false });
+          setAgendas(a ?? []);
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
   }, [unidade.id]);
 
   const ui = dbParaUI(unidade.status);
@@ -66,8 +113,8 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
   const ultimaAlteracao = (historico ?? [])[0];
   const clienteAtual = clientes.find((c) => c.id === unidade.cliente_atual_id);
 
-  function recarregar() {
-    return Promise.all([
+  async function recarregar(): Promise<void> {
+    await Promise.all([
       (async () => {
         const supabase = createClient();
         const { data: h } = await supabase.from("historico_status").select("*").eq("unidade_id", unidade.id).order("alterado_em", { ascending: false });
@@ -77,6 +124,11 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
         const supabase = createClient();
         const { data: a } = await supabase.from("agenda").select("*").eq("unidade_id", unidade.id).order("data_agendada", { ascending: false });
         setAgendas(a ?? []);
+      })(),
+      (async () => {
+        const supabase = createClient();
+        const { data: t } = await supabase.from("termos_unidade").select("*").eq("unidade_id", unidade.id).order("anexado_em", { ascending: false });
+        setTermos(t ?? []);
       })()
     ]);
   }
@@ -103,7 +155,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
           const supabase = createClient();
           const { data: nv } = await supabase.from("unidades").select("status, cliente_atual_id, observacoes").eq("id", unidade.id).maybeSingle();
           if (nv) onChanged({ ...unidade, status: nv.status as StatusUnidade, cliente_atual_id: nv.cliente_atual_id, observacoes: nv.observacoes });
-          toast.sucesso(`${unidade.identificador}: alteracao desfeita`);
+          toast.sucesso(`${formatarUnidade(unidade.identificador)}: alteracao desfeita`);
           return;
         }
       }
@@ -112,7 +164,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
       const { data: nv } = await supabase.from("unidades").select("status, cliente_atual_id, observacoes").eq("id", unidade.id).maybeSingle();
       if (nv) onChanged({ ...unidade, status: nv.status as StatusUnidade, cliente_atual_id: nv.cliente_atual_id, observacoes: nv.observacoes });
       await recarregar();
-      toast.sucesso(`${unidade.identificador}: ${ACAO_LABELS[acao]} aplicada`, {
+      toast.sucesso(`${formatarUnidade(unidade.identificador)}: ${ACAO_LABELS[acao]} aplicada`, {
         duracaoMs: 10000, acaoLabel: "Desfazer",
         acao: async () => {
           const x = await desfazerUltimaAlteracao(unidade.id);
@@ -121,7 +173,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
           const supabase = createClient();
           const { data: nv } = await supabase.from("unidades").select("status, cliente_atual_id, observacoes").eq("id", unidade.id).maybeSingle();
           if (nv) onChanged({ ...unidade, status: nv.status as StatusUnidade, cliente_atual_id: nv.cliente_atual_id, observacoes: nv.observacoes });
-          toast.sucesso(`${unidade.identificador}: alteracao desfeita`);
+          toast.sucesso(`${formatarUnidade(unidade.identificador)}: alteracao desfeita`);
         }
       });
       setFormAcao(null);
@@ -130,14 +182,40 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
 
   function aplicarResetar() {
     start(async () => {
-      const r = await resetarUnidade(unidade.id);
+      const r = await resetarUnidade(unidade.id, motivoReset || null);
       if (r?.erro) { toast.erro(r.erro); return; }
       const supabase = createClient();
       const { data: nv } = await supabase.from("unidades").select("status, cliente_atual_id, observacoes").eq("id", unidade.id).maybeSingle();
       if (nv) onChanged({ ...unidade, status: nv.status as StatusUnidade, cliente_atual_id: nv.cliente_atual_id, observacoes: nv.observacoes });
       await recarregar();
       setConfirmarReset(false);
-      toast.sucesso(`${unidade.identificador} resetada para em obra`);
+      setMotivoReset("");
+      toast.sucesso(`${formatarUnidade(unidade.identificador)} resetada para em obra`);
+    });
+  }
+
+  function aplicarAlteracaoManual(novo: StatusUnidade, motivo: string) {
+    start(async () => {
+      const r = await alterarEtapaManualmente(unidade.id, novo, motivo || null);
+      if (r?.erro) { toast.erro(r.erro); return; }
+      const supabase = createClient();
+      const { data: nv } = await supabase.from("unidades").select("status, cliente_atual_id, observacoes").eq("id", unidade.id).maybeSingle();
+      if (nv) onChanged({ ...unidade, status: nv.status as StatusUnidade, cliente_atual_id: nv.cliente_atual_id, observacoes: nv.observacoes });
+      await recarregar();
+      setModalEtapa(false);
+      toast.sucesso(`${formatarUnidade(unidade.identificador)}: etapa alterada para ${STATUS_LABELS[novo]}`);
+    });
+  }
+
+  function aplicarReverter(historicoId: number, motivo: string) {
+    start(async () => {
+      const r = await reverterParaEvento(unidade.id, historicoId, motivo || null);
+      if (r?.erro) { toast.erro(r.erro); return; }
+      const supabase = createClient();
+      const { data: nv } = await supabase.from("unidades").select("status, cliente_atual_id, observacoes").eq("id", unidade.id).maybeSingle();
+      if (nv) onChanged({ ...unidade, status: nv.status as StatusUnidade, cliente_atual_id: nv.cliente_atual_id, observacoes: nv.observacoes });
+      await recarregar();
+      toast.sucesso(`${formatarUnidade(unidade.identificador)}: revertida para ${STATUS_LABELS[r.para as StatusUnidade]}`);
     });
   }
 
@@ -162,9 +240,11 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-xs text-gray-500">
-                {torreNome ? `Torre ${torreNome} · ` : ""}Pavimento {String(unidade.pavimento).padStart(2, "0")} · {unidade.codigo_unidade}
+                Pavimento {String(unidade.pavimento).padStart(2, "0")} · {unidade.identificador}
               </div>
-              <div className="text-2xl font-semibold tracking-tight">{unidade.identificador}</div>
+              <div className="text-2xl font-semibold tracking-tight">
+                {formatarUnidade(unidade.identificador)}
+              </div>
               <div className="mt-2 flex items-center gap-2 flex-wrap">
                 <span className={`inline-flex items-center text-xs font-medium px-2 py-1 rounded ${cor.chip}`}>
                   {STATUS_LABELS_UI[ui]}
@@ -210,7 +290,13 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
             </Card>
           </section>
 
-          <section>
+          {somenteLeitura && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+              Modo leitura — visualizacao apenas.
+            </div>
+          )}
+
+          {!somenteLeitura && <section>
             <div className="text-xs font-medium text-gray-600 mb-2">Acoes rapidas</div>
             {unidade.status === "reprovada" && (
               <div className="mb-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-800">
@@ -239,27 +325,35 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
               ))}
             </div>
 
-            <div className="mt-3 pt-3 border-t">
+            <div className="mt-3 pt-3 border-t flex flex-wrap gap-2">
+              <button onClick={() => setModalEtapa(true)}
+                className="text-xs px-3 py-1.5 rounded border bg-white hover:bg-gray-50">
+                Alterar etapa manualmente
+              </button>
               {!confirmarReset ? (
                 <button onClick={() => setConfirmarReset(true)}
                   className="text-xs px-3 py-1.5 rounded border text-red-700 hover:bg-red-50">
-                  &#8634; Resetar (desmarcar tudo)
+                  &#8634; Resetar operacional
                 </button>
               ) : (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2">
+                <div className="w-full bg-red-50 border border-red-200 rounded-lg p-3 space-y-2">
                   <div className="text-sm font-medium text-red-900">Resetar {unidade.identificador}?</div>
                   <ul className="text-xs text-red-900 list-disc list-inside space-y-0.5">
                     <li>Cancela agendas em aberto desta unidade</li>
-                    <li>Desvincula o cliente atual</li>
                     <li>Volta o status para <b>em obra</b></li>
+                    <li><b>Mantem</b> o cliente vinculado e os dados do imovel</li>
                     <li>O historico de auditoria <b>nao</b> e apagado</li>
                   </ul>
+                  <input value={motivoReset} onChange={(e) => setMotivoReset(e.target.value)}
+                    placeholder="Motivo (opcional)"
+                    className="w-full text-xs border rounded px-2 py-1.5 bg-white" />
                   <div className="flex gap-2">
                     <button disabled={pending} onClick={aplicarResetar}
                       className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
                       {pending ? "Resetando..." : "Sim, resetar"}
                     </button>
-                    <button onClick={() => setConfirmarReset(false)} className="text-xs px-3 py-1.5 rounded border">Cancelar</button>
+                    <button onClick={() => { setConfirmarReset(false); setMotivoReset(""); }}
+                      className="text-xs px-3 py-1.5 rounded border">Cancelar</button>
                   </div>
                 </div>
               )}
@@ -270,12 +364,12 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
                 pending={pending} onCancel={() => setFormAcao(null)}
                 onSubmit={(dados) => aplicar(formAcao, dados)} />
             )}
-          </section>
+          </section>}
 
           <section>
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs font-medium text-gray-600">Observacoes operacionais</div>
-              {obsDirty && (
+              {obsDirty && !somenteLeitura && (
                 <button disabled={pending} onClick={salvarObs}
                   className="text-xs px-2 py-1 rounded bg-gray-900 text-white disabled:opacity-50">Salvar</button>
               )}
@@ -286,22 +380,305 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, on
           </section>
 
           <section>
+            <div className="text-xs font-medium text-gray-600 mb-2">Termos de Recebimento</div>
+            <TermosSection
+              unidadeId={unidade.id}
+              termos={termos ?? []}
+              agendas={agendas ?? []}
+              somenteLeitura={somenteLeitura}
+              onAnexado={recarregar}
+            />
+          </section>
+
+          <section>
             <div className="text-xs font-medium text-gray-600 mb-2">Timeline</div>
             <ol className="space-y-3">
               {timeline.length === 0 && <li className="text-sm text-gray-500">Sem eventos.</li>}
               {timeline.map((ev, i) => (
                 <li key={i} className="flex gap-3 text-sm">
                   <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${ev.cor}`} />
-                  <div className="flex-1">
-                    <div>{ev.titulo}</div>
-                    <div className="text-[11px] text-gray-500">{ev.quando}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-medium">{ev.titulo}</div>
+                      {ev.podeReverter && ev.historicoId !== undefined && (
+                        <button
+                          disabled={pending}
+                          onClick={() => {
+                            const motivo = window.prompt("Motivo da reversao (opcional):") ?? "";
+                            aplicarReverter(ev.historicoId!, motivo);
+                          }}
+                          className="text-[10px] px-2 py-0.5 rounded border bg-white hover:bg-gray-50 whitespace-nowrap"
+                          title="Reverter unidade para o estado anterior a este evento"
+                        >
+                          Reverter ate aqui
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-gray-500">
+                      {ev.quando}
+                      {ev.origem && ev.origem !== "sistema" && (
+                        <span className="ml-2 inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px]">
+                          {ev.origem}
+                        </span>
+                      )}
+                      {ev.usuario && <span className="ml-2">por {ev.usuario.slice(0, 8)}</span>}
+                    </div>
+                    {ev.motivo && (
+                      <div className="text-[11px] text-gray-700 mt-0.5 italic">"{ev.motivo}"</div>
+                    )}
                   </div>
                 </li>
               ))}
             </ol>
           </section>
         </div>
+
+        {modalEtapa && (
+          <ModalAlterarEtapa
+            statusAtual={unidade.status}
+            pending={pending}
+            onCancel={() => setModalEtapa(false)}
+            onConfirmar={aplicarAlteracaoManual}
+          />
+        )}
       </aside>
+    </div>
+  );
+}
+
+function ModalAlterarEtapa({
+  statusAtual, pending, onCancel, onConfirmar,
+}: {
+  statusAtual: StatusUnidade;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirmar: (novo: StatusUnidade, motivo: string) => void;
+}) {
+  const [novo, setNovo] = useState<StatusUnidade>(statusAtual);
+  const [motivo, setMotivo] = useState("");
+  const regressao = ehRegressao(statusAtual, novo);
+  const mesmoStatus = novo === statusAtual;
+  const motivoFaltando = regressao && motivo.trim().length === 0;
+
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 p-4" onClick={onCancel}>
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div>
+          <div className="text-base font-semibold">Alterar etapa manualmente</div>
+          <div className="text-xs text-gray-500">
+            Etapa atual: <b>{STATUS_LABELS[statusAtual]}</b>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs text-gray-600">Nova etapa</label>
+          <select value={novo} onChange={(e) => setNovo(e.target.value as StatusUnidade)}
+            className="mt-1 w-full border rounded px-3 py-2 text-sm bg-white">
+            {STATUS_ORDER.map((s) => (
+              <option key={s} value={s}>{STATUS_LABELS[s]}{s === statusAtual ? " (atual)" : ""}</option>
+            ))}
+          </select>
+        </div>
+
+        {regressao && (
+          <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900">
+            <b>Atencao:</b> voce esta voltando para uma etapa anterior do fluxo.
+            Confirme apenas se for uma correcao operacional. Informe o motivo abaixo.
+          </div>
+        )}
+
+        <div>
+          <label className="text-xs text-gray-600">
+            Motivo {regressao ? <span className="text-red-600">*</span> : "(opcional)"}
+          </label>
+          <textarea value={motivo} onChange={(e) => setMotivo(e.target.value)}
+            rows={2}
+            placeholder="ex.: equipe precisou retornar unidade para corrigir item"
+            className="mt-1 w-full border rounded px-3 py-2 text-sm" />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onCancel} className="text-sm px-3 py-1.5 rounded border">Cancelar</button>
+          <button
+            disabled={pending || mesmoStatus || motivoFaltando}
+            onClick={() => onConfirmar(novo, motivo.trim())}
+            className="text-sm px-3 py-1.5 rounded bg-gray-900 text-white disabled:opacity-50"
+          >
+            {pending ? "Aplicando..." : "Confirmar alteracao"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TermosSection({ unidadeId, termos, agendas, somenteLeitura = false, onAnexado }: {
+  unidadeId: string;
+  termos: TermoUnidade[];
+  agendas: Agenda[];
+  somenteLeitura?: boolean;
+  onAnexado: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [anexando, setAnexando] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [agendaId, setAgendaId] = useState<string>("");
+
+  const agendasConcluidas = agendas.filter(
+    (a) => a.status_agenda === "concluida" && a.resultado && a.resultado !== "pendente"
+  );
+  const agendasSemTermo = agendasConcluidas.filter(
+    (a) => !termos.some((t) => t.agenda_id === a.id)
+  );
+  const agendaSelecionada = agendasConcluidas.find((a) => a.id === agendaId) ?? agendasSemTermo[0];
+
+  function abrirForm() {
+    setAgendaId(agendasSemTermo[0]?.id ?? "");
+    setArquivo(null);
+    setAnexando(true);
+  }
+
+  async function handleUpload() {
+    if (!arquivo) return;
+    setUploading(true);
+    try {
+      const supabase = createClient();
+      const ext = arquivo.name.split(".").pop() ?? "pdf";
+      const path = `${unidadeId}/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("termos-unidade").upload(path, arquivo);
+      if (upErr) { toast.erro(upErr.message); return; }
+      const resultado = agendaSelecionada?.resultado === "aprovada" ? "aprovacao" : "reprovacao";
+      const r = await salvarTermo({
+        unidadeId,
+        agendaId: agendaSelecionada?.id ?? null,
+        resultado,
+        arquivoPath: path,
+      });
+      if (r.erro) {
+        await supabase.storage.from("termos-unidade").remove([path]);
+        toast.erro(r.erro);
+        return;
+      }
+      setAnexando(false);
+      setArquivo(null);
+      await onAnexado();
+      toast.sucesso("Termo anexado");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleBaixar(arquivoPath: string) {
+    const supabase = createClient();
+    const { data, error } = await supabase.storage.from("termos-unidade").createSignedUrl(arquivoPath, 300);
+    if (error || !data) { toast.erro("Erro ao gerar link"); return; }
+    window.open(data.signedUrl, "_blank");
+  }
+
+  async function handleExcluir(termoId: string, arquivoPath: string) {
+    const r = await excluirTermo(termoId, arquivoPath);
+    if (r.erro) { toast.erro(r.erro); return; }
+    await onAnexado();
+    toast.sucesso("Termo removido");
+  }
+
+  return (
+    <div className="space-y-2">
+      {termos.length === 0 && !anexando && (
+        <div className="text-sm text-gray-500">Nenhum termo anexado.</div>
+      )}
+
+      {termos.length > 0 && (
+        <ul className="space-y-2">
+          {termos.map((t) => (
+            <li key={t.id} className="flex items-center justify-between gap-2 text-sm border rounded-lg px-3 py-2 bg-gray-50">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${
+                  t.resultado === "aprovacao"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-red-100 text-red-800"
+                }`}>
+                  {t.resultado === "aprovacao" ? "Aprovacao" : "Reprovacao"}
+                </span>
+                <span className="text-xs text-gray-500 truncate">
+                  {new Date(t.anexado_em).toLocaleString("pt-BR")}
+                </span>
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <button
+                  onClick={() => handleBaixar(t.arquivo_path)}
+                  className="text-xs px-2 py-1 rounded border text-blue-700 hover:bg-blue-50">
+                  Baixar
+                </button>
+                {!somenteLeitura && (
+                  <button
+                    onClick={() => handleExcluir(t.id, t.arquivo_path)}
+                    className="text-xs px-2 py-1 rounded border text-red-700 hover:bg-red-50">
+                    Remover
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {agendasSemTermo.length > 0 && !anexando && !somenteLeitura && (
+        <button
+          onClick={abrirForm}
+          className="w-full text-xs px-3 py-2 rounded border border-dashed border-gray-400 text-gray-700 hover:bg-gray-50">
+          + Anexar Termo
+        </button>
+      )}
+
+      {anexando && (
+        <div className="border rounded-lg p-3 space-y-2 bg-gray-50">
+          <div className="text-xs font-medium text-gray-700">Anexar Termo de Recebimento</div>
+
+          {agendasSemTermo.length > 1 && (
+            <select
+              value={agendaId}
+              onChange={(e) => setAgendaId(e.target.value)}
+              className="w-full border rounded px-3 py-2 text-sm bg-white">
+              {agendasSemTermo.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {new Date(a.data_agendada).toLocaleString("pt-BR")} — {a.tipo} — {a.resultado}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {agendaSelecionada && (
+            <div className="text-xs text-gray-600">
+              Vistoria: {new Date(agendaSelecionada.data_agendada).toLocaleString("pt-BR")} · Resultado:{" "}
+              <span className={agendaSelecionada.resultado === "aprovada" ? "text-emerald-700 font-medium" : "text-red-700 font-medium"}>
+                {agendaSelecionada.resultado === "aprovada" ? "Aprovada" : "Reprovada"}
+              </span>
+            </div>
+          )}
+
+          <input
+            type="file"
+            accept=".pdf,image/*"
+            onChange={(e) => setArquivo(e.target.files?.[0] ?? null)}
+            className="text-sm w-full" />
+
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => { setAnexando(false); setArquivo(null); }}
+              className="text-xs px-3 py-1.5 rounded border">
+              Cancelar
+            </button>
+            <button
+              disabled={!arquivo || uploading}
+              onClick={handleUpload}
+              className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white disabled:opacity-50">
+              {uploading ? "Enviando..." : "Salvar"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -356,7 +733,11 @@ function FormAgendaInline({ tipo, clientes, clienteAtualId, pending, onCancel, o
   );
 }
 
-type EvTimeline = { titulo: string; quando: string; cor: string; tsMs: number };
+type EvTimeline = {
+  titulo: string; quando: string; cor: string; tsMs: number;
+  historicoId?: number; podeReverter?: boolean;
+  motivo?: string | null; origem?: string | null; usuario?: string | null;
+};
 function construirTimeline(historico: HistoricoStatus[], agendas: Agenda[]): EvTimeline[] {
   const evs: EvTimeline[] = [];
   for (const h of historico) {
@@ -365,7 +746,13 @@ function construirTimeline(historico: HistoricoStatus[], agendas: Agenda[]): EvT
     const titulo = h.status_anterior
       ? `Status: ${STATUS_LABELS_UI[dbParaUI(h.status_anterior as StatusUnidade)]} -> ${STATUS_LABELS_UI[ui]}`
       : `Status inicial: ${STATUS_LABELS_UI[ui]}`;
-    evs.push({ titulo, quando: new Date(h.alterado_em).toLocaleString("pt-BR"), cor: STATUS_COLORS_UI[ui].bg, tsMs: ts });
+    evs.push({
+      titulo,
+      quando: new Date(h.alterado_em).toLocaleString("pt-BR"),
+      cor: STATUS_COLORS_UI[ui].bg, tsMs: ts,
+      historicoId: h.id, podeReverter: h.status_anterior !== null,
+      motivo: h.motivo, origem: h.origem, usuario: h.alterado_por,
+    });
   }
   for (const a of agendas) {
     const ts = new Date(a.data_agendada).getTime();

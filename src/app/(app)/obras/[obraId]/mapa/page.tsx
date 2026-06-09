@@ -1,10 +1,14 @@
 import { createClient } from "@/lib/supabase/server";
+import { getPapelAtual, ehSomenteLeitura } from "@/lib/supabase/papel";
 import MapaOperacional from "./mapa-operacional";
 
 export const dynamic = "force-dynamic";
 
 export default async function MapaPage({ params }: { params: { obraId: string } }) {
   const supabase = createClient();
+
+  const papel = await getPapelAtual();
+  const somenteLeitura = ehSomenteLeitura(papel);
 
   const [{ data: torres }, { data: unidades }, { data: clientes }] = await Promise.all([
     supabase.from("torres")
@@ -27,6 +31,7 @@ export default async function MapaPage({ params }: { params: { obraId: string } 
         torres={torres ?? []}
         unidadesIniciais={unidades ?? []}
         clientes={clientes ?? []}
+        somenteLeitura={somenteLeitura}
       />
     </div>
   );

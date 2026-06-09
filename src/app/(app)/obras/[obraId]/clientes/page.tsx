@@ -1,10 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
+import { getPapelAtual, ehSomenteLeitura } from "@/lib/supabase/papel";
 import ClientesUI from "./clientes-ui";
 
 export const dynamic = "force-dynamic";
 
 export default async function ClientesPage({ params }: { params: { obraId: string } }) {
   const supabase = createClient();
+  const papel = await getPapelAtual();
+  const somenteLeitura = ehSomenteLeitura(papel);
 
   const [{ data: clientes }, { data: unidades }, { data: agendas }] = await Promise.all([
     supabase
@@ -29,6 +32,7 @@ export default async function ClientesPage({ params }: { params: { obraId: strin
       clientes={clientes ?? []}
       unidades={unidades ?? []}
       agendas={agendas ?? []}
+      somenteLeitura={somenteLeitura}
     />
   );
 }

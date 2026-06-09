@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/toast";
 import { createClient } from "@/lib/supabase/client";
 import { criarCliente, editarCliente, excluirCliente, desvincularClienteUnidade, vincularClienteUnidade } from "./actions";
+import { formatarUnidade } from "@/lib/format/unidade";
 
 type Cliente = { id: string; nome: string; cpf: string | null; email: string | null; telefone: string | null; observacoes: string | null; created_at: string; };
 type Unidade = { id: string; identificador: string; status: string; cliente_atual_id: string | null; };
 type Agenda = { id: string; cliente_id: string | null; unidade_id: string; data_agendada: string; status_agenda: "agendada" | "concluida" | "cancelada" | "remarcada"; resultado: "aprovada" | "reprovada" | "pendente" | null; tipo: string; };
 
-export default function ClientesUI({ obraId, clientes: clientesIniciais, unidades: unidadesIniciais, agendas: agendasIniciais }: {
-  obraId: string; clientes: Cliente[]; unidades: Unidade[]; agendas: Agenda[];
+export default function ClientesUI({ obraId, clientes: clientesIniciais, unidades: unidadesIniciais, agendas: agendasIniciais, somenteLeitura = false }: {
+  obraId: string; clientes: Cliente[]; unidades: Unidade[]; agendas: Agenda[]; somenteLeitura?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -108,7 +109,7 @@ export default function ClientesUI({ obraId, clientes: clientesIniciais, unidade
           placeholder="Buscar nome, CPF, email, telefone..."
           className="flex-1 min-w-[200px] text-sm border rounded-md px-3 py-1.5" />
         <div className="text-xs text-gray-500">{filtrados.length} cliente{filtrados.length !== 1 ? "s" : ""}</div>
-        <button onClick={() => setNovoAberto(true)} className="text-sm px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700">+ Novo cliente</button>
+        {!somenteLeitura && <button onClick={() => setNovoAberto(true)} className="text-sm px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700">+ Novo cliente</button>}
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -123,7 +124,7 @@ export default function ClientesUI({ obraId, clientes: clientesIniciais, unidade
               <div className="text-xs text-gray-500 mt-0.5">{c.telefone ?? "(sem telefone)"}{c.email ? ` · ${c.email}` : ""}</div>
               <div className="mt-2 flex flex-wrap gap-1">
                 {uds.slice(0, 3).map((u) => (
-                  <span key={u.id} className="text-[11px] px-2 py-0.5 rounded bg-gray-100 text-gray-700">{u.identificador}</span>
+                  <span key={u.id} className="text-[11px] px-2 py-0.5 rounded bg-gray-100 text-gray-700">{formatarUnidade(u.identificador)}</span>
                 ))}
                 {uds.length > 3 && <span className="text-[11px] text-gray-500">+{uds.length - 3}</span>}
                 {uds.length === 0 && <span className="text-[11px] text-gray-400">sem unidade vinculada</span>}
@@ -144,6 +145,7 @@ export default function ClientesUI({ obraId, clientes: clientesIniciais, unidade
           unidadesDoCliente={unidades.filter((u) => u.cliente_atual_id === selecionado.id)}
           agendas={agendas.filter((a) => a.cliente_id === selecionado.id)}
           pending={pending}
+          somenteLeitura={somenteLeitura}
           onClose={() => setSelecionado(null)}
           onEditar={aplicarEditar}
           onExcluir={() => aplicarExcluir(selecionado.id)}
@@ -159,9 +161,9 @@ export default function ClientesUI({ obraId, clientes: clientesIniciais, unidade
   );
 }
 
-function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pending, onClose, onEditar, onExcluir, onDesvincular, onVincularUnidade }: {
+function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pending, somenteLeitura = false, onClose, onEditar, onExcluir, onDesvincular, onVincularUnidade }: {
   cliente: Cliente; todasUnidades: Unidade[]; unidadesDoCliente: Unidade[]; agendas: Agenda[];
-  pending: boolean; onClose: () => void; onEditar: (input: any) => void; onExcluir: () => void;
+  pending: boolean; somenteLeitura?: boolean; onClose: () => void; onEditar: (input: any) => void; onExcluir: () => void;
   onDesvincular: (unidadeId: string) => void; onVincularUnidade: (novaId: string | null, antigaId: string | null) => void;
 }) {
   const [editando, setEditando] = useState(false);
@@ -190,7 +192,7 @@ function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pen
             <section>
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[11px] uppercase tracking-wide text-gray-500">Dados</div>
-                <button onClick={() => setEditando(true)} className="text-xs text-blue-700 hover:underline">Editar</button>
+                {!somenteLeitura && <button onClick={() => setEditando(true)} className="text-xs text-blue-700 hover:underline">Editar</button>}
               </div>
               <div className="text-sm space-y-1">
                 <Linha label="CPF" valor={cliente.cpf} />
@@ -214,8 +216,8 @@ function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pen
             {unidadesDoCliente.length === 0 ? (
               <div className="space-y-2">
                 <div className="text-sm text-gray-500">Nenhuma unidade vinculada.</div>
-                <button onClick={() => setEditandoVinculo("__nova__")}
-                  className="text-xs px-3 py-1.5 rounded border border-blue-300 text-blue-700 hover:bg-blue-50">+ Vincular unidade</button>
+                {!somenteLeitura && <button onClick={() => setEditandoVinculo("__nova__")}
+                  className="text-xs px-3 py-1.5 rounded border border-blue-300 text-blue-700 hover:bg-blue-50">+ Vincular unidade</button>}
               </div>
             ) : (
               <ul className="space-y-2">
@@ -223,15 +225,17 @@ function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pen
                   <li key={u.id} className="bg-gray-50 border rounded-lg px-3 py-2 space-y-2">
                     <div className="flex items-center justify-between gap-2 text-sm">
                       <div className="flex-1 min-w-0">
-                        <span className="font-medium">{u.identificador}</span>
+                        <span className="font-medium">{formatarUnidade(u.identificador)}</span>
                         <span className="ml-2 text-xs text-gray-500">{u.status}</span>
                       </div>
-                      <div className="flex gap-1.5">
-                        <button disabled={pending} onClick={() => setEditandoVinculo(editandoVinculo === u.id ? null : u.id)}
-                          className="text-xs px-2 py-1 rounded border text-blue-700 hover:bg-blue-50 disabled:opacity-50">Alterar</button>
-                        <button disabled={pending} onClick={() => onDesvincular(u.id)}
-                          className="text-xs px-2 py-1 rounded border text-gray-700 hover:bg-white disabled:opacity-50">Desvincular</button>
-                      </div>
+                      {!somenteLeitura && (
+                        <div className="flex gap-1.5">
+                          <button disabled={pending} onClick={() => setEditandoVinculo(editandoVinculo === u.id ? null : u.id)}
+                            className="text-xs px-2 py-1 rounded border text-blue-700 hover:bg-blue-50 disabled:opacity-50">Alterar</button>
+                          <button disabled={pending} onClick={() => onDesvincular(u.id)}
+                            className="text-xs px-2 py-1 rounded border text-gray-700 hover:bg-white disabled:opacity-50">Desvincular</button>
+                        </div>
+                      )}
                     </div>
                     {editandoVinculo === u.id && (
                       <FormAlterarVinculo antigaUnidade={u} todasUnidades={todasUnidades} clienteId={cliente.id}
@@ -249,7 +253,7 @@ function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pen
                   onSalvar={(novaId) => { setEditandoVinculo(null); onVincularUnidade(novaId, null); }} />
               </div>
             )}
-            {unidadesDoCliente.length > 0 && editandoVinculo !== "__nova__" && (
+            {unidadesDoCliente.length > 0 && editandoVinculo !== "__nova__" && !somenteLeitura && (
               <button onClick={() => setEditandoVinculo("__nova__")}
                 className="mt-2 text-xs px-3 py-1.5 rounded border border-blue-300 text-blue-700 hover:bg-blue-50">+ Vincular outra unidade</button>
             )}
@@ -280,7 +284,7 @@ function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pen
             </ol>
           </section>
 
-          <section className="border-t pt-4">
+          {!somenteLeitura && <section className="border-t pt-4">
             {!confirmExcluir ? (
               <button onClick={() => setConfirmExcluir(true)} className="text-sm px-3 py-2 rounded-md border text-red-700 hover:bg-red-50">Excluir cliente</button>
             ) : (
@@ -302,7 +306,7 @@ function ClientePainel({ cliente, todasUnidades, unidadesDoCliente, agendas, pen
                 </div>
               </div>
             )}
-          </section>
+          </section>}
         </div>
       </aside>
     </div>
@@ -330,8 +334,8 @@ function FormAlterarVinculo({ antigaUnidade, todasUnidades, clienteId, pending, 
       <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-3 text-sm">
         <div className="font-medium text-amber-900">Confirmar alteracao de vinculo?</div>
         <div className="text-xs text-amber-800 space-y-1">
-          {antigaUnidade && <div>Remover vinculo de: <strong>{antigaUnidade.identificador}</strong></div>}
-          <div>Vincular a: <strong>{novaSelecionada.identificador}</strong></div>
+          {antigaUnidade && <div>Remover vinculo de: <strong>{formatarUnidade(antigaUnidade.identificador)}</strong></div>}
+          <div>Vincular a: <strong>{formatarUnidade(novaSelecionada.identificador)}</strong></div>
         </div>
         <div className="flex gap-2">
           <button disabled={pending} onClick={() => onSalvar(novaId)}
@@ -347,7 +351,7 @@ function FormAlterarVinculo({ antigaUnidade, todasUnidades, clienteId, pending, 
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
       <div className="text-xs font-medium text-blue-900">
-        {antigaUnidade ? `Alterar vinculo (atual: ${antigaUnidade.identificador})` : "Vincular unidade"}
+        {antigaUnidade ? `Alterar vinculo (atual: ${formatarUnidade(antigaUnidade.identificador)})` : "Vincular unidade"}
       </div>
       {disponiveis.length === 0 ? (
         <div className="text-xs text-gray-500">Todas as unidades disponiveis ja estao vinculadas a outros clientes.</div>
@@ -356,7 +360,7 @@ function FormAlterarVinculo({ antigaUnidade, todasUnidades, clienteId, pending, 
           className="w-full border rounded px-3 py-2 text-sm bg-white">
           <option value="">Selecione a nova unidade...</option>
           {disponiveis.map((u) => (
-            <option key={u.id} value={u.id}>{u.identificador} ({u.status})</option>
+            <option key={u.id} value={u.id}>{formatarUnidade(u.identificador)} ({u.status})</option>
           ))}
         </select>
       )}
@@ -443,7 +447,7 @@ function NovoClienteModal({ unidades, pending, onClose, onSubmit }: {
             <div className="flex flex-wrap gap-1">
               {vinculadas.map((u) => (
                 <span key={u.id} className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                  {u.identificador}
+                  {formatarUnidade(u.identificador)}
                   <button type="button" onClick={() => setVinculadas(vinculadas.filter((v) => v.id !== u.id))} className="text-blue-700 hover:text-blue-900">&times;</button>
                 </span>
               ))}
@@ -460,7 +464,7 @@ function NovoClienteModal({ unidades, pending, onClose, onSubmit }: {
                   <li key={u.id}>
                     <button type="button" onMouseDown={() => { setVinculadas([...vinculadas, u]); setQuery(""); setAberto(false); }}
                       className="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 flex items-center justify-between gap-2">
-                      <span className="font-medium">{u.identificador}</span>
+                      <span className="font-medium">{formatarUnidade(u.identificador)}</span>
                       <span className="text-[11px] text-gray-500">{u.status}</span>
                     </button>
                   </li>

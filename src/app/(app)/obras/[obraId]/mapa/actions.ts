@@ -162,18 +162,59 @@ export async function atualizarObservacoesUnidade(unidadeId: string, observacoes
   return { ok: true };
 }
 
-export async function resetarUnidade(unidadeId: string): Promise<Resp> {
+/**
+ * Reset operacional: cancela agendas em aberto e volta status para em_obra.
+ * NAO desvincula o cliente da unidade. Vinculo contratual e preservado.
+ */
+export async function resetarUnidade(unidadeId: string, motivo?: string | null): Promise<Resp> {
   const supabase = createClient();
-  const { data: u } = await supabase.from("unidades").select("status, obra_id").eq("id", unidadeId).maybeSingle();
-  if (!u) return { erro: "Unidade nao encontrada" };
-  await supabase.from("agenda")
-    .update({ status_agenda: "cancelada", observacoes: "cancelada por reset da unidade" })
-    .eq("unidade_id", unidadeId).eq("status_agenda", "agendada");
-  const { error } = await supabase.from("unidades")
-    .update({ status: "em_obra", cliente_atual_id: null }).eq("id", unidadeId);
+  const { error } = await (supabase.rpc as any)("resetar_operacional", {
+    p_unidade_id: unidadeId,
+    p_motivo: motivo ?? null,
+  });
   if (error) return { erro: error.message };
   revalidatePath("/obras", "layout");
   return { ok: true };
+}
+
+/**
+ * Alteracao manual de etapa: bypassa state machine. Permitido para
+ * corrigir erros operacionais. Quando e regressao, o front exige motivo.
+ */
+export async function alterarEtapaManualmente(
+  unidadeId: string,
+  novoStatus: StatusUnidade,
+  motivo?: string | null
+): Promise<Resp> {
+  const supabase = createClient();
+  const { error } = await (supabase.rpc as any)("alterar_status_manual", {
+    p_unidade_id: unidadeId,
+    p_novo_status: novoStatus,
+    p_motivo: motivo ?? null,
+  });
+  if (error) return { erro: error.message };
+  revalidatePath("/obras", "layout");
+  return { ok: true };
+}
+
+/**
+ * Reverte unidade para um ponto especifico da timeline (qualquer evento,
+ * nao apenas o ultimo). Volta para status_anterior daquele evento.
+ */
+export async function reverterParaEvento(
+  unidadeId: string,
+  historicoId: number,
+  motivo?: string | null
+): Promise<Resp & { para?: StatusUnidade }> {
+  const supabase = createClient();
+  const { data, error } = await (supabase.rpc as any)("reverter_para_evento", {
+    p_unidade_id: unidadeId,
+    p_historico_id: historicoId,
+    p_motivo: motivo ?? null,
+  });
+  if (error) return { erro: error.message };
+  revalidatePath("/obras", "layout");
+  return { ok: true, para: data as StatusUnidade };
 }
 
 export async function desfazerUltimaAlteracao(unidadeId: string): Promise<Resp & { para?: StatusUnidade }> {

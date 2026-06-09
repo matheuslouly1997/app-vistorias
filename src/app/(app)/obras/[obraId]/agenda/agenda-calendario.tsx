@@ -8,6 +8,8 @@ import {
   editarHorarioAgenda, trocarClienteAgenda
 } from "./actions";
 import { desfazerUltimaAlteracao } from "../mapa/actions";
+import { formatarUnidade } from "@/lib/format/unidade";
+import FiltroTorre from "@/components/filtro-torre";
 
 /* ============================================================
  * Tipos minimos
@@ -24,8 +26,9 @@ type Agenda = {
   cliente_id: string | null;
   created_at: string;
 };
-type UnidadeMin = { id: string; identificador: string; status: string };
+type UnidadeMin = { id: string; identificador: string; status: string; torre_id?: string | null };
 type ClienteMin = { id: string; nome: string; telefone: string | null; email: string | null };
+type TorreMin = { id: string; nome: string };
 
 type View = "semana" | "dia" | "lista";
 type Periodo = "hoje" | "amanha" | "semana" | "proximos7" | "todos";
@@ -99,12 +102,16 @@ export default function AgendaCalendario({
   unidades,
   unidadesAgendaveis,
   clientes,
+  torres = [],
+  somenteLeitura = false,
 }: {
   obraId: string;
   agendaInicial: Agenda[];
   unidades: UnidadeMin[];
   unidadesAgendaveis: UnidadeMin[];
   clientes: ClienteMin[];
+  torres?: TorreMin[];
+  somenteLeitura?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -113,15 +120,51 @@ export default function AgendaCalendario({
   const [dataRef, setDataRef] = useState<Date>(new Date());
   const [periodo, setPeriodo] = useState<Periodo>("semana");
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>("todas");
+  const [filtroTorre, setFiltroTorre] = useState<string>("todas");
   const [busca, setBusca] = useState("");
   const [selecionada, setSelecionada] = useState<Agenda | null>(null);
   const [novaAberto, setNovaAberto] = useState(false);
 
   // Estado local: inicializado com dados do servidor
   const [agenda, setAgenda] = useState<Agenda[]>(agendaInicial);
+  const [unidadesLocal, setUnidadesLocal] = useState<UnidadeMin[]>(unidades);
+  const [clientesLocal, setClientesLocal] = useState<ClienteMin[]>(clientes);
 
   // Sincroniza quando router.refresh() retorna novos dados do servidor
   useEffect(() => { setAgenda(agendaInicial); }, [agendaInicial]);
+  useEffect(() => { setUnidadesLocal(unidades); }, [unidades]);
+  useEffect(() => { setClientesLocal(clientes); }, [clientes]);
+
+  // Realtime: unidades e clientes. Mantem unidadeMap e clienteMap em sincronia
+  // com alteracoes feitas no mapa, no painel, ou por outros usuarios.
+  useEffect(() => {
+    const supabase = createClient();
+    const ch = supabase
+      .channel(`agenda_unidades_clientes_${obraId}`)
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "unidades", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const nova = p.new as UnidadeMin;
+          setUnidadesLocal((prev) => prev.map((u) => (u.id === nova.id ? { ...u, ...nova } : u)));
+        }
+      )
+      .on("postgres_changes",
+        { event: "INSERT", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const novo = p.new as ClienteMin;
+          setClientesLocal((prev) => prev.some((c) => c.id === novo.id) ? prev : [...prev, novo]);
+        }
+      )
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "clientes", filter: `obra_id=eq.${obraId}` },
+        (p) => {
+          const atualizado = p.new as ClienteMin;
+          setClientesLocal((prev) => prev.map((c) => (c.id === atualizado.id ? { ...c, ...atualizado } : c)));
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [obraId]);
 
   // Realtime: mantém agenda atualizada para todos os usuários sem refresh manual
   useEffect(() => {
@@ -171,8 +214,8 @@ export default function AgendaCalendario({
     return () => { supabase.removeChannel(ch); };
   }, [obraId]);
 
-  const unidadeMap = useMemo(() => new Map(unidades.map((u) => [u.id, u])), [unidades]);
-  const clienteMap = useMemo(() => new Map(clientes.map((c) => [c.id, c])), [clientes]);
+  const unidadeMap = useMemo(() => new Map(unidadesLocal.map((u) => [u.id, u])), [unidadesLocal]);
+  const clienteMap = useMemo(() => new Map(clientesLocal.map((c) => [c.id, c])), [clientesLocal]);
 
   // Periodo -> range
   const range = useMemo(() => {
@@ -195,6 +238,12 @@ export default function AgendaCalendario({
     return agenda.filter((a) => {
       const d = new Date(a.data_agendada);
       if (d < range.ini || d > range.fim) return false;
+
+      // torre
+      if (filtroTorre !== "todas") {
+        const u = unidadeMap.get(a.unidade_id);
+        if (u?.torre_id !== filtroTorre) return false;
+      }
 
       // status
       if (filtroStatus !== "todas") {
@@ -222,7 +271,7 @@ export default function AgendaCalendario({
       }
       return true;
     });
-  }, [agenda, range, filtroStatus, busca, unidadeMap, clienteMap]);
+  }, [agenda, range, filtroStatus, filtroTorre, busca, unidadeMap, clienteMap]);
 
   function navegar(delta: number) {
     if (view === "dia") setDataRef((d) => addDays(d, delta));
@@ -241,7 +290,7 @@ export default function AgendaCalendario({
       const r = await concluirVistoria(a.id, "aprovada");
       if (r?.erro) return toast.erro(r.erro);
       router.refresh();
-      toast.sucesso(`${unidadeMap.get(a.unidade_id)?.identificador ?? "Unidade"}: aprovada`, {
+      toast.sucesso(`${unidadeMap.get(a.unidade_id) ? formatarUnidade(unidadeMap.get(a.unidade_id)!.identificador) : "Unidade"}: aprovada`, {
         acaoLabel: "Desfazer",
         acao: async () => {
           const x = await desfazerUltimaAlteracao(a.unidade_id);
@@ -257,7 +306,7 @@ export default function AgendaCalendario({
       const r = await concluirVistoria(a.id, "reprovada");
       if (r?.erro) return toast.erro(r.erro);
       router.refresh();
-      toast.sucesso(`${unidadeMap.get(a.unidade_id)?.identificador ?? "Unidade"}: reprovada`, {
+      toast.sucesso(`${unidadeMap.get(a.unidade_id) ? formatarUnidade(unidadeMap.get(a.unidade_id)!.identificador) : "Unidade"}: reprovada`, {
         acaoLabel: "Desfazer",
         acao: async () => {
           const x = await desfazerUltimaAlteracao(a.unidade_id);
@@ -341,12 +390,14 @@ export default function AgendaCalendario({
             </div>
           </div>
 
-          <button
-            onClick={() => setNovaAberto(true)}
-            className="text-sm px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
-          >
-            + Nova vistoria
-          </button>
+          {!somenteLeitura && (
+            <button
+              onClick={() => setNovaAberto(true)}
+              className="text-sm px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+            >
+              + Nova vistoria
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -360,6 +411,8 @@ export default function AgendaCalendario({
               {p === "hoje" ? "Hoje" : p === "amanha" ? "Amanha" : p === "semana" ? "Esta semana" : p === "proximos7" ? "Proximos 7d" : "Todos"}
             </button>
           ))}
+          <span className="text-gray-300">|</span>
+          <FiltroTorre torres={torres} valor={filtroTorre} onChange={setFiltroTorre} />
           <span className="text-gray-300">|</span>
           <span className="text-gray-500">Status:</span>
           {(["todas", "agendadas", "aprovadas", "reprovadas", "reagendadas", "canceladas"] as FiltroStatus[]).map((f) => (
@@ -419,8 +472,9 @@ export default function AgendaCalendario({
           agenda={selecionada}
           unidade={unidadeMap.get(selecionada.unidade_id)}
           cliente={selecionada.cliente_id ? clienteMap.get(selecionada.cliente_id) : null}
-          clientes={clientes}
+          clientes={clientesLocal}
           pending={pending}
+          somenteLeitura={somenteLeitura}
           onClose={() => setSelecionada(null)}
           onAprovar={() => aplicarAprovar(selecionada)}
           onReprovar={() => aplicarReprovar(selecionada)}
@@ -434,7 +488,7 @@ export default function AgendaCalendario({
       {novaAberto && (
         <NovaVistoriaModal
           unidadesAgendaveis={unidadesAgendaveis}
-          clientes={clientes}
+          clientes={clientesLocal}
           pending={pending}
           onClose={() => setNovaAberto(false)}
           onSubmit={aplicarNovaVistoria}
@@ -537,7 +591,7 @@ function ViewDia({
             <div className={`w-1.5 rounded ${cor.barra}`} />
             <div className="flex-1">
               <div className="flex items-center justify-between">
-                <div className="font-semibold">{u?.identificador ?? "?"}</div>
+                <div className="font-semibold">{u ? formatarUnidade(u.identificador) : "?"}</div>
                 <span className={`text-[11px] px-2 py-0.5 rounded-md ${cor.chip}`}>{cor.label}</span>
               </div>
               <div className="text-sm text-gray-600">{c?.nome ?? "(sem cliente)"}</div>
@@ -597,7 +651,7 @@ function ViewLista({
                 <div className={`w-2 h-8 rounded ${cor.barra}`} />
                 <div className="w-16 text-sm font-medium">{formatHorario(d)}</div>
                 <div className="flex-1">
-                  <div className="font-medium text-sm">{u?.identificador ?? "?"}</div>
+                  <div className="font-medium text-sm">{u ? formatarUnidade(u.identificador) : "?"}</div>
                   <div className="text-xs text-gray-500">{c?.nome ?? "(sem cliente)"} {c?.telefone ? `· ${c.telefone}` : ""}</div>
                 </div>
                 <span className={`text-[11px] px-2 py-0.5 rounded-md ${cor.chip}`}>{cor.label}</span>
@@ -627,13 +681,13 @@ function AgendaCard({
     <button
       onClick={onClick}
       className="w-full text-left text-xs bg-white border rounded-md p-2 hover:shadow transition"
-      title={`${unidade?.identificador} · ${cliente?.nome ?? "sem cliente"}`}
+      title={`${unidade ? formatarUnidade(unidade.identificador) : "?"} · ${cliente?.nome ?? "sem cliente"}`}
     >
       <div className="flex items-center gap-1.5">
         <div className={`w-1 h-3 rounded ${cor.barra}`} />
         <div className="font-medium">{formatHorario(d)}</div>
       </div>
-      <div className="font-semibold truncate">{unidade?.identificador ?? "?"}</div>
+      <div className="font-semibold truncate">{unidade ? formatarUnidade(unidade.identificador) : "?"}</div>
       <div className="text-gray-500 truncate">{cliente?.nome ?? "(sem cliente)"}</div>
       <span className={`mt-1 inline-block text-[10px] px-1.5 py-0.5 rounded ${cor.chip}`}>{cor.label}</span>
     </button>
@@ -644,7 +698,7 @@ function AgendaCard({
  * Painel lateral com detalhes + acoes
  * ============================================================ */
 function AgendaPainel({
-  agenda, unidade, cliente, clientes, pending,
+  agenda, unidade, cliente, clientes, pending, somenteLeitura = false,
   onClose, onAprovar, onReprovar, onCancelar, onEditarHorario, onTrocarCliente
 }: {
   agenda: Agenda;
@@ -652,6 +706,7 @@ function AgendaPainel({
   cliente: ClienteMin | null | undefined;
   clientes: ClienteMin[];
   pending: boolean;
+  somenteLeitura?: boolean;
   onClose: () => void;
   onAprovar: () => void;
   onReprovar: () => void;
@@ -673,7 +728,7 @@ function AgendaPainel({
         <div className="px-5 py-4 border-b sticky top-0 bg-white z-10 flex items-start justify-between gap-3">
           <div>
             <div className="text-xs text-gray-500">Vistoria</div>
-            <div className="text-xl font-semibold">{unidade?.identificador ?? "?"}</div>
+            <div className="text-xl font-semibold">{unidade ? formatarUnidade(unidade.identificador) : "?"}</div>
             <div className="mt-1 flex items-center gap-2">
               <span className={`text-xs px-2 py-0.5 rounded-md ${cor.chip}`}>{cor.label}</span>
               <span className="text-[11px] text-gray-500">{agenda.tipo.replace("_", " ")} · {agenda.duracao_min}min</span>
@@ -738,7 +793,7 @@ function AgendaPainel({
           )}
 
           {/* Acoes */}
-          {ativa && (
+          {ativa && !somenteLeitura && (
             <section>
               <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-2">Acoes</div>
               <div className="flex flex-wrap gap-2">
@@ -794,7 +849,7 @@ function NovaVistoriaModal({
             <select name="unidade_id" required className="w-full border rounded px-3 py-2 text-sm">
               <option value="">Selecione...</option>
               {unidadesAgendaveis.map((u) => (
-                <option key={u.id} value={u.id}>{u.identificador} ({u.status})</option>
+                <option key={u.id} value={u.id}>{formatarUnidade(u.identificador)} ({u.status})</option>
               ))}
             </select>
             <p className="text-[10px] text-gray-500 mt-1">Listadas: unidades em finalizada_obra ou reprovada.</p>

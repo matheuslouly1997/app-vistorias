@@ -36,11 +36,23 @@ export interface Agenda {
   responsavel_id: string | null; observacoes: string | null;
   created_by: string | null; created_at: string; updated_at: string;
 }
+export interface TermoUnidade {
+  id: string;
+  unidade_id: string;
+  agenda_id: string | null;
+  resultado: "reprovacao" | "aprovacao";
+  arquivo_path: string;
+  anexado_por: string | null;
+  anexado_em: string;
+}
+export type OrigemHistorico = "sistema" | "acao" | "manual" | "reset" | "desfazer" | "reverter";
+
 export interface HistoricoStatus {
   id: number; unidade_id: string; obra_id: string;
   status_anterior: StatusUnidade | null; status_novo: StatusUnidade;
   agenda_id: string | null; motivo: string | null;
   alterado_por: string | null; alterado_em: string;
+  origem: OrigemHistorico;
 }
 export interface Perfil {
   id: string; nome: string; email: string; papel: PapelGlobal; ativo: boolean; created_at: string;
@@ -69,6 +81,7 @@ export type Database = {
       unidades:         Tbl<Unidade>;
       agenda:           Tbl<Agenda>;
       historico_status: Tbl<HistoricoStatus>;
+      termos_unidade:   Tbl<TermoUnidade>;
       perfis:           Tbl<Perfil>;
       perfis_obras:     Tbl<PerfilObra>;
       [key: string]:    { Row: any; Insert: any; Update: any; Relationships: any[] };

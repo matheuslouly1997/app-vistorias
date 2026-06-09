@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/client";
 import { STATUS_COLORS_UI, STATUS_LABELS_UI, STATUS_ORDER_UI, dbParaUI } from "@/lib/constants/status";
 import type { StatusUnidade } from "@/lib/types/database";
 import UnidadePainel from "./unidade-painel";
+import { formatarUnidade, unidadeCompacta } from "@/lib/format/unidade";
+import FiltroTorre from "@/components/filtro-torre";
 
 type Torre = {
   id: string;
@@ -29,15 +31,18 @@ export default function MapaOperacional({
   torres,
   unidadesIniciais,
   clientes: clientesIniciais,
+  somenteLeitura = false,
 }: {
   obraId: string;
   torres: Torre[];
   unidadesIniciais: Unidade[];
   clientes: ClienteMin[];
+  somenteLeitura?: boolean;
 }) {
   const [unidades, setUnidades] = useState<Unidade[]>(unidadesIniciais);
   const [clientes, setClientes] = useState<ClienteMin[]>(clientesIniciais);
   const [selecionada, setSelecionada] = useState<Unidade | null>(null);
+  const [torreFiltro, setTorreFiltro] = useState<string>("todas");
 
   // Realtime: unidades — INSERT, UPDATE e DELETE
   useEffect(() => {
@@ -131,12 +136,22 @@ export default function MapaOperacional({
     return m;
   }, [unidades]);
 
-  // Contagem por status UI (legenda)
+  // Aplica filtro de torre nas torres renderizadas e na legenda.
+  const torresVisiveis = useMemo(
+    () => torreFiltro === "todas" ? torres : torres.filter((t) => t.id === torreFiltro),
+    [torres, torreFiltro]
+  );
+  const unidadesVisiveis = useMemo(
+    () => torreFiltro === "todas" ? unidades : unidades.filter((u) => u.torre_id === torreFiltro),
+    [unidades, torreFiltro]
+  );
+
+  // Contagem por status UI (legenda) — respeita o filtro de torre.
   const contagem = useMemo(() => {
     const c = Object.fromEntries(STATUS_ORDER_UI.map((s) => [s, 0])) as Record<string, number>;
-    for (const u of unidades) c[dbParaUI(u.status)]++;
+    for (const u of unidadesVisiveis) c[dbParaUI(u.status)]++;
     return c;
-  }, [unidades]);
+  }, [unidadesVisiveis]);
 
   const torreSelecionada = selecionadaAtual
     ? torres.find((t) => t.id === selecionadaAtual.torre_id)
@@ -144,6 +159,13 @@ export default function MapaOperacional({
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <FiltroTorre torres={torres} valor={torreFiltro} onChange={setTorreFiltro} />
+        <span className="text-xs text-gray-500">
+          {unidadesVisiveis.length} unidade(s) · {torresVisiveis.length} torre(s)
+        </span>
+      </div>
+
       {/* Legenda — chips clean */}
       <div className="flex flex-wrap gap-2">
         {STATUS_ORDER_UI.map((s) => (
@@ -159,7 +181,7 @@ export default function MapaOperacional({
 
       {/* Torres */}
       <div className="grid gap-6">
-        {torres.map((t) => {
+        {torresVisiveis.map((t) => {
           const pavs = Array.from({ length: t.qtd_pavimentos }, (_, i) => t.qtd_pavimentos - i);
           return (
             <section key={t.id} className="bg-white border rounded-xl p-4 shadow-sm overflow-x-auto">
@@ -200,6 +222,7 @@ export default function MapaOperacional({
           torreNome={torreSelecionada?.nome}
           obraId={obraId}
           clientes={clientes}
+          somenteLeitura={somenteLeitura}
           onClose={() => setSelecionada(null)}
           onChanged={(novo) =>
             setUnidades((prev) => prev.map((u) => (u.id === novo.id ? novo : u)))
@@ -236,9 +259,9 @@ function RowPavimento({
             type="button"
             onClick={() => onClick(u)}
             className={`m-0.5 h-9 rounded text-[11px] font-semibold flex items-center justify-center transition active:scale-95 hover:brightness-110 hover:ring-2 ring-offset-1 ${c.bg} ${c.text} ${c.ring}`}
-            title={`${u.identificador} — ${STATUS_LABELS_UI[ui]}`}
+            title={`${formatarUnidade(u.identificador)} — ${STATUS_LABELS_UI[ui]}`}
           >
-            {u.identificador}
+            {unidadeCompacta(u.identificador)}
           </button>
         );
       })}

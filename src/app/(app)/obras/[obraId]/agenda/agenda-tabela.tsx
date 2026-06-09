@@ -2,6 +2,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { concluirVistoria, cancelarAgenda } from "./actions";
+import { formatarUnidade } from "@/lib/format/unidade";
 
 type Item = {
   id: string;
@@ -62,7 +63,7 @@ export default function AgendaTabela({ itens }: { itens: Item[] }) {
                 <td className="px-3 py-2 whitespace-nowrap">
                   {new Date(a.data_agendada).toLocaleString("pt-BR")}
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">{a.unidade_identificador}</td>
+                <td className="px-3 py-2 font-mono text-xs">{formatarUnidade(a.unidade_identificador)}</td>
                 <td className="px-3 py-2">{a.cliente_nome}</td>
                 <td className="px-3 py-2">{a.tipo}</td>
                 <td className="px-3 py-2">

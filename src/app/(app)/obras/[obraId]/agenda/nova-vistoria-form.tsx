@@ -2,6 +2,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { agendarVistoria } from "./actions";
+import { formatarUnidade } from "@/lib/format/unidade";
 
 type UnidadeMin = { id: string; identificador: string; status: string };
 type ClienteMin = { id: string; nome: string };
@@ -38,7 +39,7 @@ export default function NovaVistoriaForm({
           <option value="">Selecione...</option>
           {unidades.map((u) => (
             <option key={u.id} value={u.id}>
-              {u.identificador} ({u.status})
+              {formatarUnidade(u.identificador)} ({u.status})
             </option>
           ))}
         </select>
