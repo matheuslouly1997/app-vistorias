@@ -12,7 +12,7 @@ import * as XLSX from "xlsx";
 
 export const dynamic = "force-dynamic";
 
-type Tipo = "agenda" | "clientes" | "unidades" | "kpi";
+type Tipo = "agenda" | "clientes" | "unidades" | "kpi" | "termos";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
     case "clientes": { ({ rows, abaNome } = await rowsClientes(supabase, obraId));          break; }
     case "unidades": { ({ rows, abaNome } = await rowsUnidades(supabase, obraId));          break; }
     case "kpi":      { ({ rows, abaNome } = await rowsKpi(supabase, obraId));               break; }
+    case "termos":   { ({ rows, abaNome } = await rowsTermos(supabase, obraId));            break; }
     default: return NextResponse.json({ error: "tipo invalido" }, { status: 400 });
   }
 
@@ -158,6 +159,99 @@ async function rowsKpi(supabase: ReturnType<typeof createClient>, obraId: string
     { Metrica: "Vistoriadas (atual)",               Valor: k.vistoriadas }
   ];
   return { rows, abaNome: "KPIs" };
+}
+
+async function rowsTermos(supabase: ReturnType<typeof createClient>, obraId: string) {
+  const { data: unidades } = await supabase
+    .from("unidades")
+    .select("id, identificador, status, torre_id")
+    .eq("obra_id", obraId)
+    .order("identificador");
+
+  const { data: torres } = await supabase
+    .from("torres").select("id, nome").eq("obra_id", obraId);
+
+  const unidadeIds = (unidades ?? []).map((u: any) => u.id);
+  const tMap = new Map((torres ?? []).map((t: any) => [t.id, t.nome as string]));
+
+  let termos: any[] = [];
+  let agendas: any[] = [];
+  let historico: any[] = [];
+
+  if (unidadeIds.length > 0) {
+    const [{ data: t }, { data: a }, { data: h }] = await Promise.all([
+      supabase
+        .from("termos_unidade")
+        .select("id, unidade_id, agenda_id, resultado, arquivo_path, anexado_em, data_assinatura")
+        .in("unidade_id", unidadeIds)
+        .order("anexado_em", { ascending: false }),
+      supabase
+        .from("agenda")
+        .select("id, unidade_id, data_agendada, status_agenda, resultado")
+        .eq("obra_id", obraId)
+        .order("data_agendada", { ascending: false }),
+      supabase
+        .from("historico_status")
+        .select("unidade_id, status_novo, alterado_em")
+        .eq("obra_id", obraId)
+        .in("status_novo", ["aprovada_1a", "aprovada_2a_mais"])
+        .order("alterado_em", { ascending: false }),
+    ]);
+    termos = t ?? [];
+    agendas = a ?? [];
+    historico = h ?? [];
+  }
+
+  const termoMap = new Map<string, any>();
+  for (const t of termos) {
+    if (!termoMap.has(t.unidade_id)) termoMap.set(t.unidade_id, t);
+  }
+  const ultimaAgendaMap = new Map<string, any>();
+  for (const a of agendas) {
+    if (!ultimaAgendaMap.has(a.unidade_id) && a.status_agenda === "concluida") {
+      ultimaAgendaMap.set(a.unidade_id, a);
+    }
+  }
+  const agendaById = new Map(agendas.map((a: any) => [a.id, a]));
+  const aprovacaoMap = new Map<string, string>();
+  for (const h of historico) {
+    if (!aprovacaoMap.has(h.unidade_id)) aprovacaoMap.set(h.unidade_id, h.alterado_em);
+  }
+
+  const fmtData = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleDateString("pt-BR") : "";
+  const fmtDataHora = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleString("pt-BR") : "";
+
+  const rows = (unidades ?? []).map((u: any) => {
+    const termo = termoMap.get(u.id) ?? null;
+    const agendaVinc = termo?.agenda_id ? agendaById.get(termo.agenda_id) ?? null : null;
+    const agendaRef = agendaVinc ?? ultimaAgendaMap.get(u.id) ?? null;
+    const dataAgend = agendaRef?.data_agendada ?? null;
+    const dataAss = termo?.data_assinatura ?? null;
+
+    const termoDate = dataAss ? dataAss.slice(0, 10) : termo?.anexado_em?.slice(0, 10) ?? null;
+    const agendaDate = dataAgend?.slice(0, 10) ?? null;
+    const divergente = termoDate && agendaDate && termoDate !== agendaDate ? "Sim" : "Nao";
+
+    const nomeArquivo = termo
+      ? decodeURIComponent(termo.arquivo_path.split("/").pop() ?? termo.arquivo_path)
+      : "";
+
+    return {
+      Unidade: u.identificador,
+      Torre: tMap.get(u.torre_id) ?? "",
+      Status: u.status,
+      "Data agendamento": fmtData(dataAgend),
+      "Data aprovacao": fmtData(aprovacaoMap.get(u.id)),
+      "Possui termo": termo ? "Sim" : "Nao",
+      "Data assinatura": dataAss ? fmtData(dataAss) : fmtDataHora(termo?.anexado_em),
+      Arquivo: nomeArquivo,
+      Divergencia: termo ? divergente : "",
+    };
+  });
+
+  return { rows, abaNome: "Termos" };
 }
 
 /* ============================================================ */

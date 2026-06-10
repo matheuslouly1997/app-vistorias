@@ -32,3 +32,17 @@ export async function excluirTermo(termoId: string, arquivoPath: string): Promis
   revalidatePath("/obras", "layout");
   return { ok: true };
 }
+
+export async function atualizarDataAssinaturaTermo(
+  termoId: string,
+  dataAssinatura: string | null,
+): Promise<Resp> {
+  const supabase = createClient();
+  const { error } = await (supabase as any)
+    .from("termos_unidade")
+    .update({ data_assinatura: dataAssinatura })
+    .eq("id", termoId);
+  if (error) return { erro: error.message };
+  revalidatePath("/obras", "layout");
+  return { ok: true };
+}
