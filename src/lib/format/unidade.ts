@@ -16,21 +16,28 @@ export function parseIdentificador(identificador: string): { torre: string; codi
   return { torre: identificador.slice(0, idx), codigo: identificador.slice(idx + 1) };
 }
 
-/** Formato padrao: "1002A - Torre A". */
+/** Remove zero a esquerda do pavimento para exibicao (ex: "0601A" → "601A"). */
+function semZeroLider(codigo: string): string {
+  return codigo.replace(/^0+(\d)/, "$1");
+}
+
+/** Formato padrao: "601A - Torre A". */
 export function formatarUnidade(identificador: string): string {
   const { torre, codigo } = parseIdentificador(identificador);
-  return torre ? `${codigo} - Torre ${torre}` : codigo;
+  const c = semZeroLider(codigo);
+  return torre ? `${c} - Torre ${torre}` : c;
 }
 
-/** Variante para celulas densas: "1002A · A". */
+/** Variante para celulas densas: "601A · A". */
 export function unidadeCompacta(identificador: string): string {
   const { torre, codigo } = parseIdentificador(identificador);
-  return torre ? `${codigo} · ${torre}` : codigo;
+  const c = semZeroLider(codigo);
+  return torre ? `${c} · ${torre}` : c;
 }
 
-/** So o codigo da unidade (sem torre). Ex: "1002A". */
+/** So o codigo da unidade (sem torre). Ex: "601A". */
 export function codigoUnidade(identificador: string): string {
-  return parseIdentificador(identificador).codigo;
+  return semZeroLider(parseIdentificador(identificador).codigo);
 }
 
 /** So a torre. Ex: "A". */
