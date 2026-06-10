@@ -8,9 +8,9 @@ type RawTermo = {
   resultado: string; arquivo_path: string; anexado_em: string; data_assinatura: string | null;
 };
 type RawUnidade = { id: string; identificador: string; status: string; torre_id: string };
-type RawTorre = { id: string; nome: string };
-type RawAgenda = { id: string; unidade_id: string; data_agendada: string; status_agenda: string; resultado: string | null };
-type RawHistorico = { unidade_id: string; status_novo: string; alterado_em: string };
+type RawTorre   = { id: string; nome: string };
+type RawAgenda  = { id: string; unidade_id: string; data_agendada: string; status_agenda: string; resultado: string | null };
+type RawHist    = { unidade_id: string; status_novo: string; alterado_em: string };
 
 export default async function TermosPage({ params }: { params: { obraId: string } }) {
   const { obraId } = params;
@@ -28,7 +28,7 @@ export default async function TermosPage({ params }: { params: { obraId: string 
   if (!obraRaw) notFound();
 
   const unidades = (unidadesRaw ?? []) as RawUnidade[];
-  const torres = (torresRaw ?? []) as RawTorre[];
+  const torres   = (torresRaw  ?? []) as RawTorre[];
   const torreMap = new Map(torres.map((t) => [t.id, t.nome]));
   const unidadeIds = unidades.map((u) => u.id);
 
@@ -36,7 +36,7 @@ export default async function TermosPage({ params }: { params: { obraId: string 
     return <ControleTermos filas={[]} obraId={obraId} torres={[]} />;
   }
 
-  const [{ data: termosRaw }, { data: agendasRaw }, { data: historicoRaw }] = await Promise.all([
+  const [{ data: termosRaw }, { data: agendasRaw }, { data: histRaw }] = await Promise.all([
     supabase
       .from("termos_unidade")
       .select("id, unidade_id, agenda_id, resultado, arquivo_path, anexado_em, data_assinatura")
@@ -55,28 +55,26 @@ export default async function TermosPage({ params }: { params: { obraId: string 
       .order("alterado_em", { ascending: false }) as any,
   ]);
 
-  const termos = (termosRaw ?? []) as RawTermo[];
-  const agendas = (agendasRaw ?? []) as RawAgenda[];
-  const historico = (historicoRaw ?? []) as RawHistorico[];
+  const termos   = (termosRaw ?? []) as RawTermo[];
+  const agendas  = (agendasRaw ?? []) as RawAgenda[];
+  const historico = (histRaw   ?? []) as RawHist[];
 
-  // Most recent term per unit
+  // Termo mais recente por unidade
   const termoMap = new Map<string, RawTermo>();
   for (const t of termos) {
     if (!termoMap.has(t.unidade_id)) termoMap.set(t.unidade_id, t);
   }
 
-  // Last concluded agenda per unit
+  // Última agenda concluída por unidade (fallback quando termo não tem agenda_id)
   const ultimaAgendaMap = new Map<string, RawAgenda>();
   for (const a of agendas) {
     if (!ultimaAgendaMap.has(a.unidade_id) && a.status_agenda === "concluida") {
       ultimaAgendaMap.set(a.unidade_id, a);
     }
   }
-
-  // All agendas by id for direct lookup via agenda_id
   const agendaById = new Map(agendas.map((a) => [a.id, a]));
 
-  // Latest approval timestamp per unit
+  // Data de aprovação do historico_status (mais recente por unidade)
   const aprovacaoMap = new Map<string, string>();
   for (const h of historico) {
     if (!aprovacaoMap.has(h.unidade_id)) aprovacaoMap.set(h.unidade_id, h.alterado_em);
@@ -86,36 +84,43 @@ export default async function TermosPage({ params }: { params: { obraId: string 
     const termo = termoMap.get(u.id) ?? null;
 
     const agendaVinculada = termo?.agenda_id ? agendaById.get(termo.agenda_id) ?? null : null;
-    const agendaRef = agendaVinculada ?? ultimaAgendaMap.get(u.id) ?? null;
-
-    const dataAssinatura = termo?.data_assinatura ?? null;
+    const agendaRef       = agendaVinculada ?? ultimaAgendaMap.get(u.id) ?? null;
     const dataAgendamento = agendaRef?.data_agendada ?? null;
 
-    const termoDateStr = dataAssinatura
-      ? dataAssinatura.slice(0, 10)
-      : termo?.anexado_em?.slice(0, 10) ?? null;
-    const agendaDateStr = dataAgendamento?.slice(0, 10) ?? null;
-    const divergente = !!(termoDateStr && agendaDateStr && termoDateStr !== agendaDateStr);
+    // Data de aprovação original do historico (imutável)
+    const dataAprovacaoOriginal = aprovacaoMap.get(u.id) ?? null;
+
+    // Override manual salvo em termos_unidade.data_assinatura
+    const dataAssinatura = termo?.data_assinatura ?? null;
+
+    // Data efetiva para comparação: override tem prioridade sobre historico
+    const dataEfetiva = dataAssinatura ?? dataAprovacaoOriginal;
+
+    // Divergência: só quando AMBAS as datas são conhecidas e diferentes no nível de dia
+    const divergente = !!(
+      dataEfetiva &&
+      dataAgendamento &&
+      dataEfetiva.slice(0, 10) !== dataAgendamento.slice(0, 10)
+    );
 
     const nomeArquivo = termo
       ? decodeURIComponent(termo.arquivo_path.split("/").pop() ?? termo.arquivo_path)
       : null;
 
     return {
-      unidadeId: u.id,
-      identificador: u.identificador,
-      torreNome: torreMap.get(u.torre_id) ?? "",
-      status: u.status as StatusUnidade,
+      unidadeId:              u.id,
+      identificador:          u.identificador,
+      torreNome:              torreMap.get(u.torre_id) ?? "",
+      status:                 u.status as StatusUnidade,
       dataAgendamento,
-      dataAprovacao: aprovacaoMap.get(u.id) ?? null,
-      temTermo: !!termo,
-      termoId: termo?.id ?? null,
-      termoArquivoPath: termo?.arquivo_path ?? null,
-      termoArquivoNome: nomeArquivo,
-      termoDataAnexado: termo?.anexado_em ?? null,
-      termoDataAssinatura: dataAssinatura,
-      termoDivergente: divergente,
-      agendaId: agendaRef?.id ?? null,
+      dataAprovacaoOriginal,
+      dataAssinatura,
+      termoDivergente:        divergente,
+      temTermo:               !!termo,
+      termoId:                termo?.id ?? null,
+      termoArquivoPath:       termo?.arquivo_path ?? null,
+      termoArquivoNome:       nomeArquivo,
+      agendaId:               agendaRef?.id ?? null,
     };
   });
 

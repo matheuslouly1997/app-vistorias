@@ -220,19 +220,22 @@ async function rowsTermos(supabase: ReturnType<typeof createClient>, obraId: str
 
   const fmtData = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleDateString("pt-BR") : "";
-  const fmtDataHora = (iso: string | null | undefined) =>
-    iso ? new Date(iso).toLocaleString("pt-BR") : "";
 
   const rows = (unidades ?? []).map((u: any) => {
     const termo = termoMap.get(u.id) ?? null;
     const agendaVinc = termo?.agenda_id ? agendaById.get(termo.agenda_id) ?? null : null;
     const agendaRef = agendaVinc ?? ultimaAgendaMap.get(u.id) ?? null;
     const dataAgend = agendaRef?.data_agendada ?? null;
-    const dataAss = termo?.data_assinatura ?? null;
 
-    const termoDate = dataAss ? dataAss.slice(0, 10) : termo?.anexado_em?.slice(0, 10) ?? null;
+    // Override manual tem prioridade sobre historico
+    const dataAss = termo?.data_assinatura ?? null;
+    const dataAprovOriginal = aprovacaoMap.get(u.id) ?? null;
+    const dataEfetiva = dataAss ?? dataAprovOriginal;
+
+    // Divergência: só quando ambas as datas são conhecidas e divergem no dia
+    const efetiva = dataEfetiva?.slice(0, 10) ?? null;
     const agendaDate = dataAgend?.slice(0, 10) ?? null;
-    const divergente = termoDate && agendaDate && termoDate !== agendaDate ? "Sim" : "Nao";
+    const divergente = efetiva && agendaDate && efetiva !== agendaDate ? "Sim" : "Nao";
 
     const nomeArquivo = termo
       ? decodeURIComponent(termo.arquivo_path.split("/").pop() ?? termo.arquivo_path)
@@ -243,11 +246,11 @@ async function rowsTermos(supabase: ReturnType<typeof createClient>, obraId: str
       Torre: tMap.get(u.torre_id) ?? "",
       Status: u.status,
       "Data agendamento": fmtData(dataAgend),
-      "Data aprovacao": fmtData(aprovacaoMap.get(u.id)),
+      "Data aprovacao": fmtData(dataEfetiva),
+      "Aprovacao corrigida": dataAss ? "Sim" : "Nao",
       "Possui termo": termo ? "Sim" : "Nao",
-      "Data assinatura": dataAss ? fmtData(dataAss) : fmtDataHora(termo?.anexado_em),
       Arquivo: nomeArquivo,
-      Divergencia: termo ? divergente : "",
+      Divergencia: termo && dataEfetiva ? divergente : "",
     };
   });
 
