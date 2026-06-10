@@ -8,7 +8,8 @@ const TABS = [
   { href: "mapa",      label: "Mapa" },
   { href: "agenda",    label: "Agenda" },
   { href: "clientes",  label: "Clientes" },
-  { href: "torres",    label: "Torres" }
+  { href: "torres",    label: "Torres" },
+  { href: "termos",    label: "Controle de Termos" },
 ];
 
 export default async function ObraLayout({

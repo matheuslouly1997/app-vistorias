@@ -44,6 +44,7 @@ export interface TermoUnidade {
   arquivo_path: string;
   anexado_por: string | null;
   anexado_em: string;
+  data_assinatura: string | null;
 }
 export type OrigemHistorico = "sistema" | "acao" | "manual" | "reset" | "desfazer" | "reverter";
 

@@ -3,7 +3,7 @@ import { useState, useTransition } from "react";
 import { useToast } from "@/components/toast";
 
 type Formato = "excel" | "pdf";
-type Tipo = "agenda" | "clientes" | "unidades" | "kpi" | "dashboard";
+type Tipo = "agenda" | "clientes" | "unidades" | "kpi" | "dashboard" | "termos";
 type Periodo = "hoje" | "amanha" | "semana" | "proximos7" | "todos";
 
 const COMBOS: { formato: Formato; tipo: Tipo; label: string; precisaPeriodo?: boolean }[] = [
@@ -12,7 +12,8 @@ const COMBOS: { formato: Formato; tipo: Tipo; label: string; precisaPeriodo?: bo
   { formato: "excel", tipo: "agenda",    label: "Excel — Agenda",           precisaPeriodo: true },
   { formato: "excel", tipo: "clientes",  label: "Excel — Clientes" },
   { formato: "excel", tipo: "unidades",  label: "Excel — Unidades" },
-  { formato: "excel", tipo: "kpi",       label: "Excel — KPIs" }
+  { formato: "excel", tipo: "kpi",       label: "Excel — KPIs" },
+  { formato: "excel", tipo: "termos",    label: "Excel — Controle de Termos" }
 ];
 
 export default function BotaoExportar({ obraId }: { obraId: string }) {
