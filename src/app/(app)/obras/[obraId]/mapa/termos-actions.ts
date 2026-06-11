@@ -38,9 +38,10 @@ export async function atualizarDataAgendamentoRealTermo(
   dataAgendamentoReal: string | null,
 ): Promise<Resp> {
   const supabase = createClient();
-  const { error } = await (supabase as any)
-    .from("termos_unidade")
-    .update({ data_agendamento_real: dataAgendamentoReal })
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { erro: "Nao autenticado" };
+  const { error } = await supabase.from("termos_unidade")
+    .update({ data_agendamento_real: dataAgendamentoReal } as any)
     .eq("id", termoId);
   if (error) return { erro: error.message };
   revalidatePath("/obras", "layout");
@@ -52,9 +53,10 @@ export async function atualizarDataAssinaturaTermo(
   dataAssinatura: string | null,
 ): Promise<Resp> {
   const supabase = createClient();
-  const { error } = await (supabase as any)
-    .from("termos_unidade")
-    .update({ data_assinatura: dataAssinatura })
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { erro: "Nao autenticado" };
+  const { error } = await supabase.from("termos_unidade")
+    .update({ data_assinatura: dataAssinatura } as any)
     .eq("id", termoId);
   if (error) return { erro: error.message };
   revalidatePath("/obras", "layout");
