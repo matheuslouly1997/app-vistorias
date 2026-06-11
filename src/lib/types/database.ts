@@ -45,6 +45,7 @@ export interface TermoUnidade {
   anexado_por: string | null;
   anexado_em: string;
   data_assinatura: string | null;
+  data_agendamento_real: string | null;
 }
 export type OrigemHistorico = "sistema" | "acao" | "manual" | "reset" | "desfazer" | "reverter";
 

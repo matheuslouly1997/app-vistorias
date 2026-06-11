@@ -4,7 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/toast";
-import { excluirTermo, salvarTermo, atualizarDataAssinaturaTermo } from "../mapa/termos-actions";
+import {
+  excluirTermo, salvarTermo,
+  atualizarDataAssinaturaTermo,
+  atualizarDataAgendamentoRealTermo,
+} from "../mapa/termos-actions";
 import { STATUS_LABELS } from "@/lib/constants/status";
 import type { StatusUnidade } from "@/lib/types/database";
 
@@ -13,10 +17,11 @@ export type FilaTermo = {
   identificador: string;
   torreNome: string;
   status: StatusUnidade;
-  dataAgendamento: string | null;
-  // Data de aprovação original vinda do historico_status (inalterável)
-  dataAprovacaoOriginal: string | null;
-  // Override manual: quando definido, substitui dataAprovacaoOriginal na exibição e na divergência
+  // Agendamento original da agenda (imutável)
+  dataAgendamentoOriginal: string | null;
+  // Override manual do agendamento (salvo em termos_unidade.data_agendamento_real)
+  dataAgendamentoReal: string | null;
+  // Data real de assinatura (salvo em termos_unidade.data_assinatura) — começa vazio
   dataAssinatura: string | null;
   termoDivergente: boolean;
   temTermo: boolean;
@@ -27,6 +32,7 @@ export type FilaTermo = {
 };
 
 type FiltroTermo = "todas" | "com_termo" | "sem_termo" | "divergente";
+type CampoEdicao = "agendamento" | "assinatura";
 
 function fmtData(iso: string | null): string {
   if (!iso) return "—";
@@ -55,6 +61,84 @@ function StatusChip({ status }: { status: StatusUnidade }) {
   );
 }
 
+function CelulaEditavel({
+  termoId,
+  valor,
+  valorOriginal,
+  foiEditada,
+  editandoKey,
+  campoKey,
+  onAbrirEdicao,
+  onSalvar,
+  onCancelar,
+  novaData,
+  onNovaData,
+  salvando,
+  divergente,
+}: {
+  termoId: string | null;
+  valor: string | null;
+  valorOriginal: string | null;
+  foiEditada: boolean;
+  editandoKey: string | null;
+  campoKey: string;
+  onAbrirEdicao: () => void;
+  onSalvar: () => void;
+  onCancelar: () => void;
+  novaData: string;
+  onNovaData: (v: string) => void;
+  salvando: boolean;
+  divergente?: boolean;
+}) {
+  if (editandoKey === campoKey) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          type="date"
+          value={novaData}
+          onChange={(e) => onNovaData(e.target.value)}
+          className="border rounded px-1.5 py-0.5 text-xs w-32 bg-white"
+        />
+        <button
+          onClick={onSalvar}
+          disabled={salvando}
+          className="text-xs px-2 py-0.5 rounded bg-blue-600 text-white disabled:opacity-50"
+        >
+          {salvando ? "..." : "Ok"}
+        </button>
+        <button onClick={onCancelar} className="text-xs px-2 py-0.5 rounded border text-gray-600">
+          X
+        </button>
+      </div>
+    );
+  }
+
+  const exibido = valor ?? valorOriginal;
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={divergente ? "text-amber-700 font-medium" : "text-gray-700"}>
+        {fmtData(exibido)}
+      </span>
+      {divergente && (
+        <span title="Datas divergentes" className="text-amber-600 text-xs">⚠</span>
+      )}
+      {foiEditada && (
+        <span title="Corrigido manualmente" className="text-[10px] text-blue-600 border border-blue-300 rounded px-1">editada</span>
+      )}
+      {termoId && (
+        <button
+          onClick={onAbrirEdicao}
+          title="Editar"
+          className="text-gray-400 hover:text-gray-700 text-xs leading-none"
+        >
+          ✏
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function ControleTermos({
   filas,
   obraId,
@@ -71,9 +155,10 @@ export default function ControleTermos({
   const [filtroTorre, setFiltroTorre] = useState("todas");
   const [filtroStatus, setFiltroStatus] = useState("todas");
 
-  const [editandoId, setEditandoId] = useState<string | null>(null);
+  // Controle de edição: "termoId:campo" para saber qual célula está sendo editada
+  const [editandoKey, setEditandoKey] = useState<string | null>(null);
   const [novaData, setNovaData] = useState("");
-  const [salvandoData, setSalvandoData] = useState(false);
+  const [salvando, setSalvando] = useState(false);
 
   const [anexandoId, setAnexandoId] = useState<string | null>(null);
   const [arquivo, setArquivo] = useState<File | null>(null);
@@ -94,6 +179,24 @@ export default function ControleTermos({
     return true;
   });
 
+  function abrirEdicao(termoId: string, campo: CampoEdicao, valorAtual: string | null, valorOriginal: string | null) {
+    const chave = `${termoId}:${campo}`;
+    setEditandoKey(chave);
+    setNovaData((valorAtual ?? valorOriginal)?.slice(0, 10) ?? "");
+  }
+
+  async function handleSalvar(termoId: string, campo: CampoEdicao) {
+    setSalvando(true);
+    const r = campo === "agendamento"
+      ? await atualizarDataAgendamentoRealTermo(termoId, novaData || null)
+      : await atualizarDataAssinaturaTermo(termoId, novaData || null);
+    setSalvando(false);
+    if (r.erro) { toast.erro(r.erro); return; }
+    setEditandoKey(null);
+    toast.sucesso(campo === "agendamento" ? "Data de agendamento corrigida" : "Data de assinatura salva");
+    router.refresh();
+  }
+
   async function handleBaixar(arquivoPath: string) {
     const supabase = createClient();
     const { data, error } = await supabase.storage.from("termos-unidade").createSignedUrl(arquivoPath, 300);
@@ -107,24 +210,6 @@ export default function ControleTermos({
     setRemovendoId(null);
     if (r.erro) { toast.erro(r.erro); return; }
     toast.sucesso("Termo removido");
-    router.refresh();
-  }
-
-  function abrirEdicao(f: FilaTermo) {
-    if (!f.termoId) return;
-    setEditandoId(f.termoId);
-    // Pré-preenche com o override existente ou com a data de aprovação original
-    const dataAtual = f.dataAssinatura ?? f.dataAprovacaoOriginal;
-    setNovaData(dataAtual?.slice(0, 10) ?? "");
-  }
-
-  async function handleSalvarData(termoId: string) {
-    setSalvandoData(true);
-    const r = await atualizarDataAssinaturaTermo(termoId, novaData || null);
-    setSalvandoData(false);
-    if (r.erro) { toast.erro(r.erro); return; }
-    setEditandoId(null);
-    toast.sucesso("Data de aprovação corrigida");
     router.refresh();
   }
 
@@ -151,12 +236,8 @@ export default function ControleTermos({
     }
   }
 
-  function exportarExcel() {
-    window.location.href = `/api/export/excel?tipo=termos&obraId=${obraId}`;
-  }
-
   const qtdDivergente = filas.filter((f) => f.termoDivergente).length;
-  const qtdSemTermo = filas.filter((f) => !f.temTermo).length;
+  const qtdSemTermo   = filas.filter((f) => !f.temTermo).length;
 
   return (
     <div className="max-w-full mx-auto px-4 py-6 space-y-4">
@@ -175,8 +256,8 @@ export default function ControleTermos({
           </p>
         </div>
         <button
-          onClick={exportarExcel}
-          className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md border hover:bg-gray-50"
+          onClick={() => { window.location.href = `/api/export/excel?tipo=termos&obraId=${obraId}`; }}
+          className="text-sm px-3 py-1.5 rounded-md border hover:bg-gray-50"
         >
           ↓ Exportar Excel
         </button>
@@ -191,7 +272,7 @@ export default function ControleTermos({
               onClick={() => setFiltroTermo(v)}
               className={`px-3 py-1.5 border-r last:border-r-0 ${filtroTermo === v ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
             >
-              {v === "todas" ? "Todas" : v === "com_termo" ? "Com termo" : v === "sem_termo" ? "Sem termo" : "Data divergente"}
+              {v === "todas" ? "Todas" : v === "com_termo" ? "Com termo" : v === "sem_termo" ? "Sem termo" : "Divergente"}
             </button>
           ))}
         </div>
@@ -223,9 +304,12 @@ export default function ControleTermos({
               <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Unidade</th>
               <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Torre</th>
               <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">Data agendamento</th>
               <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
-                Data aprovação
+                Data agendamento
+                <span className="ml-1 normal-case font-normal text-gray-400">(editável)</span>
+              </th>
+              <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
+                Data assinatura
                 <span className="ml-1 normal-case font-normal text-gray-400">(editável)</span>
               </th>
               <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Termo</th>
@@ -242,69 +326,57 @@ export default function ControleTermos({
               </tr>
             )}
             {filtradas.map((f) => {
-              // Data efetiva de aprovação: override manual tem prioridade
-              const dataAprovacaoEfetiva = f.dataAssinatura ?? f.dataAprovacaoOriginal;
-              const foiCorrigida = !!f.dataAssinatura;
+              const agendKey = f.termoId ? `${f.termoId}:agendamento` : null;
+              const assKey   = f.termoId ? `${f.termoId}:assinatura`  : null;
 
               return (
                 <tr key={f.unidadeId} className={f.termoDivergente ? "bg-amber-50" : ""}>
                   <td className="px-3 py-2.5 font-medium whitespace-nowrap">{f.identificador}</td>
                   <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{f.torreNome || "—"}</td>
                   <td className="px-3 py-2.5"><StatusChip status={f.status} /></td>
-                  <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{fmtData(f.dataAgendamento)}</td>
 
-                  {/* Data aprovação — editável */}
+                  {/* Data agendamento (editável) */}
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    {f.termoId && editandoId === f.termoId ? (
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="date"
-                          value={novaData}
-                          onChange={(e) => setNovaData(e.target.value)}
-                          className="border rounded px-1.5 py-0.5 text-xs w-32 bg-white"
-                        />
-                        <button
-                          onClick={() => handleSalvarData(f.termoId!)}
-                          disabled={salvandoData}
-                          className="text-xs px-2 py-0.5 rounded bg-blue-600 text-white disabled:opacity-50"
-                        >
-                          {salvandoData ? "..." : "Ok"}
-                        </button>
-                        <button onClick={() => setEditandoId(null)} className="text-xs px-2 py-0.5 rounded border text-gray-600">
-                          X
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5">
-                        <span className={f.termoDivergente ? "text-amber-700 font-medium" : "text-gray-700"}>
-                          {fmtData(dataAprovacaoEfetiva)}
-                        </span>
-                        {f.termoDivergente && (
-                          <span title="Data de aprovação difere da data do agendamento" className="text-amber-600 text-xs">⚠</span>
-                        )}
-                        {foiCorrigida && (
-                          <span title="Data corrigida manualmente" className="text-[10px] text-blue-600 border border-blue-300 rounded px-1">editada</span>
-                        )}
-                        {f.termoId && (
-                          <button
-                            onClick={() => abrirEdicao(f)}
-                            title="Corrigir data de aprovação"
-                            className="text-gray-400 hover:text-gray-700 text-xs leading-none"
-                          >
-                            ✏
-                          </button>
-                        )}
-                      </div>
-                    )}
+                    <CelulaEditavel
+                      termoId={f.termoId}
+                      valor={f.dataAgendamentoReal}
+                      valorOriginal={f.dataAgendamentoOriginal}
+                      foiEditada={!!f.dataAgendamentoReal}
+                      editandoKey={editandoKey}
+                      campoKey={agendKey ?? ""}
+                      onAbrirEdicao={() => f.termoId && abrirEdicao(f.termoId, "agendamento", f.dataAgendamentoReal, f.dataAgendamentoOriginal)}
+                      onSalvar={() => f.termoId && handleSalvar(f.termoId, "agendamento")}
+                      onCancelar={() => setEditandoKey(null)}
+                      novaData={novaData}
+                      onNovaData={setNovaData}
+                      salvando={salvando}
+                    />
+                  </td>
+
+                  {/* Data assinatura (editável, começa vazio) */}
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <CelulaEditavel
+                      termoId={f.termoId}
+                      valor={f.dataAssinatura}
+                      valorOriginal={null}
+                      foiEditada={!!f.dataAssinatura}
+                      editandoKey={editandoKey}
+                      campoKey={assKey ?? ""}
+                      onAbrirEdicao={() => f.termoId && abrirEdicao(f.termoId, "assinatura", f.dataAssinatura, null)}
+                      onSalvar={() => f.termoId && handleSalvar(f.termoId, "assinatura")}
+                      onCancelar={() => setEditandoKey(null)}
+                      novaData={novaData}
+                      onNovaData={setNovaData}
+                      salvando={salvando}
+                      divergente={f.termoDivergente}
+                    />
                   </td>
 
                   {/* Possui termo */}
                   <td className="px-3 py-2.5">
-                    {f.temTermo ? (
-                      <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">Sim</span>
-                    ) : (
-                      <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Não</span>
-                    )}
+                    {f.temTermo
+                      ? <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">Sim</span>
+                      : <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Não</span>}
                   </td>
 
                   {/* Arquivo */}
@@ -362,9 +434,7 @@ export default function ControleTermos({
         </table>
       </div>
 
-      <p className="text-xs text-gray-400">
-        {filtradas.length} de {filas.length} unidades exibidas.
-      </p>
+      <p className="text-xs text-gray-400">{filtradas.length} de {filas.length} unidades exibidas.</p>
     </div>
   );
 }
