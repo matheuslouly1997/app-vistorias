@@ -72,7 +72,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
       setHistorico(h ?? []); setAgendas(a ?? []); setTermos(t ?? []);
       const ids = [...new Set((h ?? []).map((x: HistoricoStatus) => x.alterado_por).filter(Boolean))] as string[];
       if (ids.length > 0) {
-        const { data: p } = await supabase.from("perfis").select("id, nome").in("id", ids);
+        const { data: p } = await supabase.rpc("buscar_nomes_usuarios", { ids });
         if (alive) setPerfisMap(Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])));
       }
     })();
@@ -94,7 +94,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
           setHistorico(h ?? []);
           const ids = [...new Set((h ?? []).map((x: HistoricoStatus) => x.alterado_por).filter(Boolean))] as string[];
           if (ids.length > 0) {
-            const { data: p } = await supabase.from("perfis").select("id, nome").in("id", ids);
+            const { data: p } = await supabase.rpc("buscar_nomes_usuarios", { ids });
             setPerfisMap(Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])));
           }
         })
@@ -133,7 +133,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
         setHistorico(h ?? []);
         const ids = [...new Set((h ?? []).map((x: HistoricoStatus) => x.alterado_por).filter(Boolean))] as string[];
         if (ids.length > 0) {
-          const { data: p } = await supabase.from("perfis").select("id, nome").in("id", ids);
+          const { data: p } = await supabase.rpc("buscar_nomes_usuarios", { ids });
           setPerfisMap(Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])));
         }
       })(),
