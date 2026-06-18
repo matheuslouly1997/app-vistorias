@@ -47,6 +47,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
   const toast = useToast();
   const [pending, start] = useTransition();
   const [historico, setHistorico] = useState<HistoricoStatus[] | null>(null);
+  const [perfisMap, setPerfisMap] = useState<Record<string, string>>({});
   const [agendas, setAgendas] = useState<Agenda[] | null>(null);
   const [termos, setTermos] = useState<TermoUnidade[] | null>(null);
   const [obs, setObs] = useState(unidade.observacoes ?? "");
@@ -67,7 +68,13 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
         supabase.from("agenda").select("*").eq("unidade_id", unidade.id).order("data_agendada", { ascending: false }),
         supabase.from("termos_unidade").select("*").eq("unidade_id", unidade.id).order("anexado_em", { ascending: false })
       ]);
-      if (alive) { setHistorico(h ?? []); setAgendas(a ?? []); setTermos(t ?? []); }
+      if (!alive) return;
+      setHistorico(h ?? []); setAgendas(a ?? []); setTermos(t ?? []);
+      const ids = [...new Set((h ?? []).map((x: HistoricoStatus) => x.alterado_por).filter(Boolean))] as string[];
+      if (ids.length > 0) {
+        const { data: p } = await supabase.from("perfis").select("id, nome").in("id", ids);
+        if (alive) setPerfisMap(Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])));
+      }
     })();
     return () => { alive = false; };
   }, [unidade.id]);
@@ -85,6 +92,11 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
             .select("*").eq("unidade_id", unidade.id)
             .order("alterado_em", { ascending: false });
           setHistorico(h ?? []);
+          const ids = [...new Set((h ?? []).map((x: HistoricoStatus) => x.alterado_por).filter(Boolean))] as string[];
+          if (ids.length > 0) {
+            const { data: p } = await supabase.from("perfis").select("id, nome").in("id", ids);
+            setPerfisMap(Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])));
+          }
         })
       .on("postgres_changes",
         { event: "*", schema: "public", table: "agenda", filter: `unidade_id=eq.${unidade.id}` },
@@ -119,6 +131,11 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
         const supabase = createClient();
         const { data: h } = await supabase.from("historico_status").select("*").eq("unidade_id", unidade.id).order("alterado_em", { ascending: false });
         setHistorico(h ?? []);
+        const ids = [...new Set((h ?? []).map((x: HistoricoStatus) => x.alterado_por).filter(Boolean))] as string[];
+        if (ids.length > 0) {
+          const { data: p } = await supabase.from("perfis").select("id, nome").in("id", ids);
+          setPerfisMap(Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])));
+        }
       })(),
       (async () => {
         const supabase = createClient();
@@ -229,7 +246,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
     });
   }
 
-  const timeline = useMemo(() => construirTimeline(historico ?? [], agendas ?? []), [historico, agendas]);
+  const timeline = useMemo(() => construirTimeline(historico ?? [], agendas ?? [], perfisMap), [historico, agendas, perfisMap]);
   const acoesComForm = new Set<AcaoUnidade>(["marcar_vistoria", "reagendar", "agendar_revistoria"]);
 
   return (
@@ -421,7 +438,7 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
                           {ev.origem}
                         </span>
                       )}
-                      {ev.usuario && <span className="ml-2">por {ev.usuario.slice(0, 8)}</span>}
+                      {ev.usuario && <span className="ml-2">por {ev.usuario}</span>}
                     </div>
                     {ev.motivo && (
                       <div className="text-[11px] text-gray-700 mt-0.5 italic">"{ev.motivo}"</div>
@@ -760,7 +777,7 @@ type EvTimeline = {
   historicoId?: number; podeReverter?: boolean;
   motivo?: string | null; origem?: string | null; usuario?: string | null;
 };
-function construirTimeline(historico: HistoricoStatus[], agendas: Agenda[]): EvTimeline[] {
+function construirTimeline(historico: HistoricoStatus[], agendas: Agenda[], perfisMap: Record<string, string>): EvTimeline[] {
   const evs: EvTimeline[] = [];
   for (const h of historico) {
     const ts = new Date(h.alterado_em).getTime();
@@ -768,12 +785,13 @@ function construirTimeline(historico: HistoricoStatus[], agendas: Agenda[]): EvT
     const titulo = h.status_anterior
       ? `Status: ${STATUS_LABELS_UI[dbParaUI(h.status_anterior as StatusUnidade)]} -> ${STATUS_LABELS_UI[ui]}`
       : `Status inicial: ${STATUS_LABELS_UI[ui]}`;
+    const nomeUsuario = h.alterado_por ? (perfisMap[h.alterado_por] ?? h.alterado_por.slice(0, 8)) : null;
     evs.push({
       titulo,
       quando: new Date(h.alterado_em).toLocaleString("pt-BR"),
       cor: STATUS_COLORS_UI[ui].bg, tsMs: ts,
       historicoId: h.id, podeReverter: h.status_anterior !== null,
-      motivo: h.motivo, origem: h.origem, usuario: h.alterado_por,
+      motivo: h.motivo, origem: h.origem, usuario: nomeUsuario,
     });
   }
   for (const a of agendas) {
