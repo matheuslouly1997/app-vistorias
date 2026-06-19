@@ -70,7 +70,10 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
       ]);
       if (!alive) return;
       setHistorico(h ?? []); setAgendas(a ?? []); setTermos(t ?? []);
-      const ids = [...new Set((h ?? []).map((x: HistoricoStatus) => x.alterado_por).filter(Boolean))] as string[];
+      const ids = [...new Set([
+        ...(h ?? []).map((x: HistoricoStatus) => x.alterado_por),
+        ...(a ?? []).map((x: Agenda) => x.created_by),
+      ].filter(Boolean))] as string[];
       if (ids.length > 0) {
         const { data: p } = await supabase.rpc("buscar_nomes_usuarios", { ids });
         if (alive) setPerfisMap(Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])));
@@ -105,6 +108,11 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
             .select("*").eq("unidade_id", unidade.id)
             .order("data_agendada", { ascending: false });
           setAgendas(a ?? []);
+          const ids = [...new Set((a ?? []).map((x: Agenda) => x.created_by).filter(Boolean))] as string[];
+          if (ids.length > 0) {
+            const { data: p } = await supabase.rpc("buscar_nomes_usuarios", { ids });
+            setPerfisMap(prev => ({ ...prev, ...Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])) }));
+          }
         })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
@@ -141,6 +149,11 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
         const supabase = createClient();
         const { data: a } = await supabase.from("agenda").select("*").eq("unidade_id", unidade.id).order("data_agendada", { ascending: false });
         setAgendas(a ?? []);
+        const ids = [...new Set((a ?? []).map((x: Agenda) => x.created_by).filter(Boolean))] as string[];
+        if (ids.length > 0) {
+          const { data: p } = await supabase.rpc("buscar_nomes_usuarios", { ids });
+          setPerfisMap(prev => ({ ...prev, ...Object.fromEntries((p ?? []).map((x: { id: string; nome: string }) => [x.id, x.nome])) }));
+        }
       })(),
       (async () => {
         const supabase = createClient();
@@ -796,11 +809,12 @@ function construirTimeline(historico: HistoricoStatus[], agendas: Agenda[], perf
   }
   for (const a of agendas) {
     const ts = new Date(a.data_agendada).getTime();
+    const nomeAgendador = a.created_by ? (perfisMap[a.created_by] ?? a.created_by.slice(0, 8)) : null;
     evs.push({
       titulo: `Agenda ${a.tipo} - ${a.status_agenda}${a.resultado ? ` - ${a.resultado}` : ""}`,
       quando: new Date(a.data_agendada).toLocaleString("pt-BR"),
       cor: a.status_agenda === "cancelada" ? "bg-gray-400" : a.resultado === "aprovada" ? "bg-emerald-500" : a.resultado === "reprovada" ? "bg-red-500" : "bg-blue-500",
-      tsMs: ts
+      tsMs: ts, usuario: nomeAgendador,
     });
   }
   evs.sort((a, b) => b.tsMs - a.tsMs);

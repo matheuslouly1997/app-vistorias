@@ -34,7 +34,7 @@ Aceita os dois formatos:
 - `sb_publishable_...` (padrao novo, 2025+)
 - `eyJhbGci...` (JWT anon legado)
 
-A `service_role` (`sb_secret_...` ou JWT de service) NUNCA vai aqui.
+A chave administrativa do Supabase NUNCA vai aqui.
 
 **Apos editar `.env.local`, reinicie `npm run dev`.** Next.js le envs no startup.
 
@@ -42,7 +42,7 @@ A `service_role` (`sb_secret_...` ou JWT de service) NUNCA vai aqui.
 
 Abra `http://localhost:3000/diagnostico`. Mostra:
 - presenca das envs (so prefixo+sufixo das keys, nunca a key completa)
-- formato detectado (sb_publishable / jwt-legado / sb_secret / desconhecido)
+- formato detectado da chave pública
 - botao "Rodar teste" que chama o endpoint publico do seu projeto e reporta o erro real
 
 ## Habilitar Realtime no Supabase

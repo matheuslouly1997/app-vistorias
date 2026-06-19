@@ -109,7 +109,7 @@ Antes de clicar Deploy, expanda **Environment Variables** e adicione:
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `sb_publishable_yhYE...` (sua key anon/publishable) | Production, Preview, Development |
 
 **Importante:**
-- A `service_role` (`sb_secret_...`) **NAO** vai aqui. Ela nunca vai pro frontend.
+- A(chave administrativa do Supabase) **NAO** vai aqui. Ela nunca vai pro frontend.
 - Os nomes tem que comecar com `NEXT_PUBLIC_` para o Next expor no browser.
 - Combinadas com RLS no Supabase, essas keys publicas sao seguras de expor.
 
@@ -232,7 +232,7 @@ A Vercel detecta o push e refaz o deploy automaticamente. Demora ~1-2 min.
 ## Seguranca — checklist final
 
 - [ ] `.env.local` NAO esta no GitHub (verifique no repo online)
-- [ ] `service_role` (sb_secret_...) nunca foi commitada em lugar nenhum
+- [ ]chave administrativa nunca foi commitada em lugar nenhum
 - [ ] Variaveis na Vercel sao apenas `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - [ ] RLS esta habilitada em todas as tabelas no Supabase (foi habilitada no schema v2)
 - [ ] Cada usuario tem entrada em `perfis` + `perfis_obras` antes de logar

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { formatarUnidade } from "@/lib/format/unidade";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +70,7 @@ export default async function PrintAgenda({ searchParams }: { searchParams: { ob
                 return (
                   <tr key={a.id} className="even:bg-gray-50">
                     <td className="px-2 py-1 border">{d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}</td>
-                    <td className="px-2 py-1 border font-medium">{uMap.get(a.unidade_id)?.identificador ?? "?"}</td>
+                    <td className="px-2 py-1 border font-medium">{uMap.get(a.unidade_id)?.identificador ? formatarUnidade(uMap.get(a.unidade_id)!.identificador) : "?"}</td>
                     <td className="px-2 py-1 border">{c?.nome ?? "—"}</td>
                     <td className="px-2 py-1 border">{c?.telefone ?? ""}</td>
                     <td className="px-2 py-1 border">{a.tipo.replace("_"," ")}</td>

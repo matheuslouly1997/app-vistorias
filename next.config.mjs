@@ -5,7 +5,7 @@ const nextConfig = {
   eslint:     { ignoreDuringBuilds: true },
   experimental: {
     serverActions: { bodySizeLimit: "2mb" },
-    serverComponentsExternalPackages: ["puppeteer", "puppeteer-core", "@sparticuz/chromium"],
+    serverComponentsExternalPackages: ["puppeteer", "puppeteer-core", "@sparticuz/chromium", "@react-pdf/renderer"],
     outputFileTracingExcludes: {
       "*": [
         "**/node_modules/.cache/puppeteer/**",

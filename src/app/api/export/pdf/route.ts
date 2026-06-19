@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
   const periodo = url.searchParams.get("periodo") || "todos";
   const unidadeId = url.searchParams.get("unidadeId");
   const torreId = url.searchParams.get("torreId");
+  const statuses = url.searchParams.get("statuses") || "";
   if (!tipo) return NextResponse.json({ error: "tipo obrigatorio" }, { status: 400 });
   if (tipo !== "unidade" && !obraId) return NextResponse.json({ error: "obraId obrigatorio" }, { status: 400 });
 
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
     case "dashboard": printPath = `/print/dashboard?obraId=${obraId}`; break;
     case "agenda":    printPath = `/print/agenda?obraId=${obraId}&periodo=${encodeURIComponent(periodo)}`; break;
     case "unidade":   printPath = `/print/unidade?unidadeId=${unidadeId}`; break;
-    case "mapa":      printPath = `/print/mapa?obraId=${obraId}${torreId ? `&torreId=${torreId}` : ""}`; break;
+    case "mapa":      printPath = `/print/mapa?obraId=${obraId}${torreId ? `&torreId=${torreId}` : ""}${statuses ? `&statuses=${encodeURIComponent(statuses)}` : ""}`; break;
   }
   const printUrl = `${origin}${printPath}`;
 
