@@ -63,6 +63,27 @@ export async function marcarVistoria(input: {
   return { ok: true };
 }
 
+/**
+ * Reagenda a vistoria ATIVA da unidade para uma nova data/horario.
+ * Move a agenda em aberto (nao cancela nem cria outra) e nao altera o status.
+ * Disponivel para unidades em 'agendado' ou 'revistoria'.
+ */
+export async function remarcarVistoriaAtiva(input: {
+  unidadeId: string; data_agendada: string; duracao_min?: number;
+}): Promise<Resp> {
+  const supabase = createClient();
+  const { unidadeId, data_agendada, duracao_min } = input;
+  if (!data_agendada) return { erro: "Informe a nova data e horario." };
+  const ag = await agendaAtivaDaUnidade(supabase, unidadeId);
+  if (!ag) return { erro: "Nao ha vistoria em aberto para reagendar." };
+  const patch: Record<string, unknown> = { data_agendada };
+  if (typeof duracao_min === "number" && duracao_min > 0) patch.duracao_min = duracao_min;
+  const { error } = await supabase.from("agenda").update(patch).eq("id", ag.id);
+  if (error) return { erro: error.message };
+  revalidatePath("/obras", "layout");
+  return { ok: true };
+}
+
 export async function aprovarUnidade(unidadeId: string): Promise<Resp> {
   const supabase = createClient();
   const { data: u } = await supabase.from("unidades").select("status").eq("id", unidadeId).maybeSingle();

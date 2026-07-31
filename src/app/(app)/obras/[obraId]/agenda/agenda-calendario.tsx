@@ -582,16 +582,18 @@ function ViewDia({
         const u = unidadeMap.get(a.unidade_id);
         const c = a.cliente_id ? clienteMap.get(a.cliente_id) : null;
         const d = new Date(a.data_agendada);
+        const cancelada = a.status_agenda === "cancelada";
         return (
           <button
             key={a.id}
             onClick={() => onClickCard(a)}
-            className="w-full text-left flex gap-3 items-stretch bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition"
+            className={`relative overflow-hidden w-full text-left flex gap-3 items-stretch bg-gray-50 hover:bg-gray-100 border rounded-lg p-3 transition ${cancelada ? "opacity-70" : ""}`}
           >
+            {cancelada && <XCancelada />}
             <div className={`w-1.5 rounded ${cor.barra}`} />
             <div className="flex-1">
               <div className="flex items-center justify-between">
-                <div className="font-semibold">{u ? formatarUnidade(u.identificador) : "?"}</div>
+                <div className={`font-semibold ${cancelada ? "line-through" : ""}`}>{u ? formatarUnidade(u.identificador) : "?"}</div>
                 <span className={`text-[11px] px-2 py-0.5 rounded-md ${cor.chip}`}>{cor.label}</span>
               </div>
               <div className="text-sm text-gray-600">{c?.nome ?? "(sem cliente)"}</div>
@@ -642,16 +644,18 @@ function ViewLista({
             const u = unidadeMap.get(a.unidade_id);
             const c = a.cliente_id ? clienteMap.get(a.cliente_id) : null;
             const d = new Date(a.data_agendada);
+            const cancelada = a.status_agenda === "cancelada";
             return (
               <button
                 key={a.id}
                 onClick={() => onClickCard(a)}
-                className="w-full text-left flex gap-3 items-center px-4 py-3 border-t hover:bg-gray-50 transition"
+                className={`relative overflow-hidden w-full text-left flex gap-3 items-center px-4 py-3 border-t hover:bg-gray-50 transition ${cancelada ? "opacity-70" : ""}`}
               >
+                {cancelada && <XCancelada />}
                 <div className={`w-2 h-8 rounded ${cor.barra}`} />
                 <div className="w-16 text-sm font-medium">{formatHorario(d)}</div>
                 <div className="flex-1">
-                  <div className="font-medium text-sm">{u ? formatarUnidade(u.identificador) : "?"}</div>
+                  <div className={`font-medium text-sm ${cancelada ? "line-through" : ""}`}>{u ? formatarUnidade(u.identificador) : "?"}</div>
                   <div className="text-xs text-gray-500">{c?.nome ?? "(sem cliente)"} {c?.telefone ? `· ${c.telefone}` : ""}</div>
                 </div>
                 <span className={`text-[11px] px-2 py-0.5 rounded-md ${cor.chip}`}>{cor.label}</span>
@@ -661,6 +665,20 @@ function ViewLista({
         </div>
       ))}
     </div>
+  );
+}
+
+/* ============================================================
+ * Overlay de X para vistorias canceladas
+ * Duas linhas cruzadas cobrindo o card. O container precisa ser
+ * `relative overflow-hidden` para recortar as pontas.
+ * ============================================================ */
+function XCancelada() {
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+      <span className="absolute left-1/2 top-1/2 h-0.5 w-[160%] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-red-500/70" />
+      <span className="absolute left-1/2 top-1/2 h-0.5 w-[160%] -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-red-500/70" />
+    </span>
   );
 }
 
@@ -677,17 +695,19 @@ function AgendaCard({
 }) {
   const cor = corAgenda(agenda);
   const d = new Date(agenda.data_agendada);
+  const cancelada = agenda.status_agenda === "cancelada";
   return (
     <button
       onClick={onClick}
-      className="w-full text-left text-xs bg-white border rounded-md p-2 hover:shadow transition"
+      className={`relative overflow-hidden w-full text-left text-xs bg-white border rounded-md p-2 hover:shadow transition ${cancelada ? "opacity-70" : ""}`}
       title={`${unidade ? formatarUnidade(unidade.identificador) : "?"} · ${cliente?.nome ?? "sem cliente"}`}
     >
+      {cancelada && <XCancelada />}
       <div className="flex items-center gap-1.5">
         <div className={`w-1 h-3 rounded ${cor.barra}`} />
         <div className="font-medium">{formatHorario(d)}</div>
       </div>
-      <div className="font-semibold truncate">{unidade ? formatarUnidade(unidade.identificador) : "?"}</div>
+      <div className={`font-semibold truncate ${cancelada ? "line-through" : ""}`}>{unidade ? formatarUnidade(unidade.identificador) : "?"}</div>
       <div className="text-gray-500 truncate">{cliente?.nome ?? "(sem cliente)"}</div>
       <span className={`mt-1 inline-block text-[10px] px-1.5 py-0.5 rounded ${cor.chip}`}>{cor.label}</span>
     </button>

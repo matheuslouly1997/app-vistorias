@@ -51,7 +51,7 @@ export const STATUS_ORDER_UI: StatusUI[] = [
 
 export type AcaoUnidade =
   | "marcar_em_correcao" | "voltar_em_obra" | "liberar_para_vistoria"
-  | "marcar_vistoria" | "aprovar" | "reprovar" | "reagendar"
+  | "marcar_vistoria" | "aprovar" | "reprovar" | "reagendar" | "remarcar_horario"
   | "marcar_entregue" | "desfazer"
   | "enviar_para_correcao" | "liberar_para_revistoria" | "agendar_revistoria";
 
@@ -60,9 +60,9 @@ export function acoesPermitidas(s: StatusUnidade): AcaoUnidade[] {
     case "em_obra":          return ["marcar_em_correcao", "liberar_para_vistoria"];
     case "em_correcao":      return ["voltar_em_obra", "liberar_para_vistoria"];
     case "finalizada_obra":  return ["marcar_vistoria"];
-    case "agendado":         return ["aprovar", "reprovar"];
+    case "agendado":         return ["aprovar", "reprovar", "remarcar_horario"];
     case "reprovada":        return ["enviar_para_correcao", "reagendar"];
-    case "revistoria":       return ["aprovar", "reprovar"];
+    case "revistoria":       return ["aprovar", "reprovar", "remarcar_horario"];
     case "aprovada_1a":
     case "aprovada_2a_mais": return ["marcar_entregue"];
     case "entregue":         return [];
@@ -79,6 +79,7 @@ export const ACAO_LABELS: Record<AcaoUnidade, string> = {
   aprovar:                   "Aprovar",
   reprovar:                  "Reprovar",
   reagendar:                 "Reagendar direto",
+  remarcar_horario:          "Reagendar",
   marcar_entregue:           "Marcar entregue",
   desfazer:                  "Desfazer ultima",
   enviar_para_correcao:      "Enviar para correcao",
@@ -94,6 +95,7 @@ export const ACAO_COR: Record<AcaoUnidade, string> = {
   aprovar:                   "bg-emerald-600 hover:bg-emerald-700 text-white",
   reprovar:                  "bg-red-600 hover:bg-red-700 text-white",
   reagendar:                 "bg-orange-600 hover:bg-orange-700 text-white",
+  remarcar_horario:          "bg-orange-600 hover:bg-orange-700 text-white",
   marcar_entregue:           "bg-slate-900 hover:bg-black text-white",
   desfazer:                  "bg-white hover:bg-gray-50 text-gray-900 border border-gray-300",
   enviar_para_correcao:      "bg-purple-700 hover:bg-purple-800 text-white",

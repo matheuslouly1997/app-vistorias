@@ -14,7 +14,7 @@ import {
   marcarEntregue, liberarParaVistoria, marcarEmCorrecao, voltarEmObra,
   atualizarObservacoesUnidade, desfazerUltimaAlteracao, resetarUnidade,
   enviarParaCorrecao, liberarParaRevistoria, agendarRevistoria,
-  alterarEtapaManualmente, reverterParaEvento,
+  alterarEtapaManualmente, reverterParaEvento, remarcarVistoriaAtiva,
 } from "./actions";
 
 // Ordem operacional do fluxo (do mais "obra" ao mais "entregue") usada
@@ -41,7 +41,7 @@ type Props = {
   somenteLeitura?: boolean;
   onClose: () => void; onChanged: (u: Unidade) => void;
 };
-type FormAcaoTipo = "marcar_vistoria" | "reagendar" | "agendar_revistoria";
+type FormAcaoTipo = "marcar_vistoria" | "reagendar" | "agendar_revistoria" | "remarcar_horario";
 
 export default function UnidadePainel({ unidade, torreNome, obraId, clientes, somenteLeitura = false, onClose, onChanged }: Props) {
   const toast = useToast();
@@ -127,9 +127,12 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
     return temAlteracao ? [...lista, "desfazer"] : lista;
   }, [unidade.status, historico]);
 
-  const proximaAgenda = (agendas ?? []).find(
-    (a) => a.status_agenda === "agendada" && new Date(a.data_agendada).getTime() >= Date.now() - 60_000
-  );
+  // Vistoria ATIVA (agendada), independente de estar no passado ou futuro.
+  // A mais proxima no tempo e a que sera reagendada.
+  const agendaAtiva = (agendas ?? [])
+    .filter((a) => a.status_agenda === "agendada")
+    .sort((a, b) => +new Date(a.data_agendada) - +new Date(b.data_agendada))[0];
+  const agendaAtivaAtrasada = agendaAtiva ? new Date(agendaAtiva.data_agendada).getTime() < Date.now() : false;
   const ultimaAlteracao = (historico ?? [])[0];
   const clienteAtual = clientes.find((c) => c.id === unidade.cliente_atual_id);
 
@@ -259,8 +262,18 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
     });
   }
 
+  function aplicarRemarcar(data_agendada: string) {
+    start(async () => {
+      const r = await remarcarVistoriaAtiva({ unidadeId: unidade.id, data_agendada });
+      if (r?.erro) { toast.erro(r.erro); return; }
+      await recarregar();
+      setFormAcao(null);
+      toast.sucesso(`${formatarUnidade(unidade.identificador)}: vistoria reagendada`);
+    });
+  }
+
   const timeline = useMemo(() => construirTimeline(historico ?? [], agendas ?? [], perfisMap), [historico, agendas, perfisMap]);
-  const acoesComForm = new Set<AcaoUnidade>(["marcar_vistoria", "reagendar", "agendar_revistoria"]);
+  const acoesComForm = new Set<AcaoUnidade>(["marcar_vistoria", "reagendar", "agendar_revistoria", "remarcar_horario"]);
 
   return (
     <div className="fixed inset-0 z-30 flex" role="dialog" aria-modal="true">
@@ -310,13 +323,18 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
                 </div>
               ) : <div className="text-sm text-gray-500">Sem cliente vinculado.</div>}
             </Card>
-            <Card titulo="Proxima vistoria">
-              {proximaAgenda ? (
+            <Card titulo="Vistoria em aberto">
+              {agendaAtiva ? (
                 <div className="text-sm">
-                  <div className="font-medium">{new Date(proximaAgenda.data_agendada).toLocaleString("pt-BR")}</div>
-                  <div className="text-xs text-gray-500">{proximaAgenda.tipo} · {proximaAgenda.duracao_min}min · {proximaAgenda.status_agenda}</div>
+                  <div className="font-medium">{new Date(agendaAtiva.data_agendada).toLocaleString("pt-BR")}</div>
+                  <div className="text-xs text-gray-500">{agendaAtiva.tipo} · {agendaAtiva.duracao_min}min · {agendaAtiva.status_agenda}</div>
+                  {agendaAtivaAtrasada && (
+                    <div className="mt-1 text-[11px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 inline-block">
+                      data ja passou — use "Reagendar" para uma nova data
+                    </div>
+                  )}
                 </div>
-              ) : <div className="text-sm text-gray-500">Nenhuma vistoria agendada.</div>}
+              ) : <div className="text-sm text-gray-500">Nenhuma vistoria em aberto.</div>}
             </Card>
           </section>
 
@@ -391,8 +409,12 @@ export default function UnidadePainel({ unidade, torreNome, obraId, clientes, so
 
             {formAcao && (
               <FormAgendaInline tipo={formAcao} clientes={clientes} clienteAtualId={unidade.cliente_atual_id}
+                dataInicial={formAcao === "remarcar_horario" && agendaAtiva ? toLocalInput(agendaAtiva.data_agendada) : undefined}
                 pending={pending} onCancel={() => setFormAcao(null)}
-                onSubmit={(dados) => aplicar(formAcao, dados)} />
+                onSubmit={(dados) => {
+                  if (formAcao === "remarcar_horario") aplicarRemarcar(dados.data_agendada);
+                  else aplicar(formAcao, dados);
+                }} />
             )}
           </section>}
 
@@ -744,17 +766,26 @@ function Card({ titulo, children }: { titulo: string; children: React.ReactNode 
   );
 }
 
-function FormAgendaInline({ tipo, clientes, clienteAtualId, pending, onCancel, onSubmit }: {
+function toLocalInput(iso: string) {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function FormAgendaInline({ tipo, clientes, clienteAtualId, dataInicial, pending, onCancel, onSubmit }: {
   tipo: FormAcaoTipo; clientes: { id: string; nome: string }[]; clienteAtualId: string | null;
+  dataInicial?: string;
   pending: boolean; onCancel: () => void;
   onSubmit: (dados: { data_agendada: string; cliente_id?: string; observacoes?: string }) => void;
 }) {
-  const [data, setData] = useState<string>("");
+  const [data, setData] = useState<string>(dataInicial ?? "");
   const [clienteId, setClienteId] = useState<string>(clienteAtualId ?? "");
   const [observacoes, setObservacoes] = useState<string>("");
 
+  const ehRemarcar = tipo === "remarcar_horario";
   const titulo = tipo === "marcar_vistoria" ? "Agendar 1a vistoria"
     : tipo === "agendar_revistoria" ? "Agendar revistoria (pos-correcao)"
+    : ehRemarcar ? "Reagendar vistoria (nova data/horario)"
     : "Agendar revistoria";
 
   return (
@@ -764,17 +795,21 @@ function FormAgendaInline({ tipo, clientes, clienteAtualId, pending, onCancel, o
       onSubmit({ data_agendada: new Date(data).toISOString(), cliente_id: clienteId || undefined, observacoes: observacoes || undefined });
     }} className="mt-3 bg-gray-50 border rounded-lg p-3 space-y-2">
       <div className="text-xs font-medium text-gray-700">{titulo}</div>
-      <div className="grid sm:grid-cols-2 gap-2">
+      <div className={`grid gap-2 ${ehRemarcar ? "sm:grid-cols-1" : "sm:grid-cols-2"}`}>
         <input required type="datetime-local" value={data} onChange={(e) => setData(e.target.value)}
           className="w-full border rounded px-3 py-2 text-sm bg-white" />
-        <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}
-          className="w-full border rounded px-3 py-2 text-sm bg-white">
-          <option value="">(sem cliente)</option>
-          {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-        </select>
+        {!ehRemarcar && (
+          <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}
+            className="w-full border rounded px-3 py-2 text-sm bg-white">
+            <option value="">(sem cliente)</option>
+            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+          </select>
+        )}
       </div>
-      <textarea rows={2} value={observacoes} onChange={(e) => setObservacoes(e.target.value)}
-        placeholder="observacoes (opcional)" className="w-full border rounded px-3 py-2 text-sm bg-white" />
+      {!ehRemarcar && (
+        <textarea rows={2} value={observacoes} onChange={(e) => setObservacoes(e.target.value)}
+          placeholder="observacoes (opcional)" className="w-full border rounded px-3 py-2 text-sm bg-white" />
+      )}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs px-3 py-1.5 rounded border">Cancelar</button>
         <button type="submit" disabled={pending} className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white disabled:opacity-50">
