@@ -12,6 +12,22 @@ async function agendaAtivaDaUnidade(supabase: ReturnType<typeof createClient>, u
   return data?.[0] ?? null;
 }
 
+/**
+ * Agenda a ser CONCLUIDA ao aprovar/reprovar pelo mapa.
+ * Preferencia: agenda em aberto (agendada). Se nao houver — caso em que a
+ * agenda foi cancelada e a unidade voltou a agendado/revistoria (ex.: via
+ * desfazer) — usa a agenda CANCELADA mais recente, pois a vistoria de fato
+ * ocorreu. Mantem mapa e agenda sincronizados.
+ */
+async function agendaParaConcluir(supabase: ReturnType<typeof createClient>, unidadeId: string) {
+  const aberta = await agendaAtivaDaUnidade(supabase, unidadeId);
+  if (aberta) return aberta;
+  const { data } = await supabase.from("agenda")
+    .select("id, tipo, data_agendada, status_agenda").eq("unidade_id", unidadeId)
+    .eq("status_agenda", "cancelada").order("data_agendada", { ascending: false }).limit(1);
+  return data?.[0] ?? null;
+}
+
 async function mudarStatusSimples(unidadeId: string, de: StatusUnidade, para: StatusUnidade): Promise<Resp> {
   const supabase = createClient();
   const { data: u } = await supabase.from("unidades").select("status").eq("id", unidadeId).maybeSingle();
@@ -92,7 +108,7 @@ export async function aprovarUnidade(unidadeId: string): Promise<Resp> {
   if (u.status === "agendado") novo = "aprovada_1a";
   else if (u.status === "revistoria") novo = "aprovada_2a_mais";
   else return { erro: `Aprovar so em agendado ou revistoria. Atual: ${u.status}.` };
-  const agenda = await agendaAtivaDaUnidade(supabase, unidadeId);
+  const agenda = await agendaParaConcluir(supabase, unidadeId);
   if (agenda) await supabase.from("agenda").update({ status_agenda: "concluida", resultado: "aprovada" }).eq("id", agenda.id);
   const { error } = await supabase.from("unidades").update({ status: novo }).eq("id", unidadeId);
   if (error) return { erro: error.message };
@@ -106,7 +122,7 @@ export async function reprovarUnidade(unidadeId: string): Promise<Resp> {
   if (!u) return { erro: "Unidade nao encontrada" };
   if (u.status !== "agendado" && u.status !== "revistoria")
     return { erro: `Reprovar so em agendado ou revistoria. Atual: ${u.status}.` };
-  const agenda = await agendaAtivaDaUnidade(supabase, unidadeId);
+  const agenda = await agendaParaConcluir(supabase, unidadeId);
   if (agenda) await supabase.from("agenda").update({ status_agenda: "concluida", resultado: "reprovada" }).eq("id", agenda.id);
   const { error } = await supabase.from("unidades").update({ status: "reprovada" }).eq("id", unidadeId);
   if (error) return { erro: error.message };
@@ -256,8 +272,11 @@ export async function desfazerUltimaAlteracao(unidadeId: string): Promise<Resp &
   if (errU) return { erro: errU.message };
 
   if (alvo === "agendado" || alvo === "revistoria") {
+    // Reativa a agenda mais recente que ficou concluida OU cancelada,
+    // devolvendo-a para 'agendada'. Sem isso, desfazer um cancelamento
+    // deixaria a agenda presa em 'cancelada' e fora de sincronia com o mapa.
     const { data: ag } = await supabase.from("agenda").select("id")
-      .eq("unidade_id", unidadeId).eq("status_agenda", "concluida")
+      .eq("unidade_id", unidadeId).in("status_agenda", ["concluida", "cancelada"])
       .order("data_agendada", { ascending: false }).limit(1);
     if (ag?.[0]) await supabase.from("agenda").update({ status_agenda: "agendada", resultado: null }).eq("id", ag[0].id);
   }
