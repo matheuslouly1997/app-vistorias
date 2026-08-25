@@ -4,7 +4,7 @@ import { useToast } from "@/components/toast";
 import { createClient } from "@/lib/supabase/client";
 
 type Formato = "excel" | "pdf";
-type Tipo = "agenda" | "clientes" | "unidades" | "kpi" | "dashboard" | "termos" | "mapa";
+type Tipo = "agenda" | "clientes" | "unidades" | "kpi" | "dashboard" | "termos" | "mapa" | "aprovadas_2a";
 type Periodo = "hoje" | "amanha" | "semana" | "proximos7" | "todos";
 type StatusUI = "em_obra" | "finalizada_obra" | "agendada" | "aprovada" | "reprovada" | "reagendada" | "entregue" | "em_correcao_pos_reprovacao" | "pronta_revistoria";
 
@@ -26,6 +26,7 @@ const COMBOS: { formato: Formato; tipo: Tipo; label: string; precisaPeriodo?: bo
   { formato: "pdf",   tipo: "dashboard", label: "PDF — Dashboard / KPIs" },
   { formato: "pdf",   tipo: "agenda",    label: "PDF — Agenda",            precisaPeriodo: true },
   { formato: "pdf",   tipo: "mapa",      label: "PDF — Mapa (por torre)",  precisaMapa: true },
+  { formato: "pdf",   tipo: "aprovadas_2a", label: "PDF — Aprovadas na 2ª vistoria" },
   { formato: "excel", tipo: "agenda",    label: "Excel — Agenda",           precisaPeriodo: true },
   { formato: "excel", tipo: "clientes",  label: "Excel — Clientes" },
   { formato: "excel", tipo: "unidades",  label: "Excel — Unidades" },
@@ -86,6 +87,8 @@ export default function BotaoExportar({ obraId }: { obraId: string }) {
       url = `/api/export/mapa-pdf?obraId=${obraId}`;
       if (torreId !== "todas") url += `&torreId=${torreId}`;
       if (statusesParam) url += `&statuses=${encodeURIComponent(statusesParam)}`;
+    } else if (c.tipo === "aprovadas_2a") {
+      url = `/api/export/aprovadas-2a-pdf?obraId=${obraId}`;
     } else {
       url = c.formato === "excel"
         ? `/api/export/excel?tipo=${c.tipo}&obraId=${obraId}${c.precisaPeriodo ? `&periodo=${periodo}` : ""}`

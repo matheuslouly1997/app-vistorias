@@ -50,17 +50,29 @@ export default function DashboardUI({
   const geral = useMemo(() => {
     const c = Object.fromEntries(
       ["em_obra","em_correcao","finalizada_obra","agendado",
-       "aprovada_1a","aprovada_2a_mais","reprovada","revistoria","entregue"].map((s) => [s, 0])
+       "aprovada_1a","aprovada_2a_mais","reprovada","revistoria","entregue",
+       "em_correcao_pos_reprovacao","pronta_revistoria"].map((s) => [s, 0])
     ) as Record<string, number>;
     for (const u of contagensStatus) c[u.status] = (c[u.status] ?? 0) + 1;
     const total = contagensStatus.length;
     const aprovadas = c.aprovada_1a + c.aprovada_2a_mais;
+    const pctAprov1a = aprovadas ? Math.round((c.aprovada_1a / aprovadas) * 100) : 0;
+    const pctAprov2a = aprovadas ? 100 - pctAprov1a : 0;
+    // Pipeline pos-reprovacao: unidades ja reprovadas que ainda serao aprovadas na 2a vistoria
+    const emRevistoria = c.reprovada + c.em_correcao_pos_reprovacao + c.pronta_revistoria + c.revistoria;
     return {
       total,
       em_obra:           c.em_obra + c.em_correcao,
       finalizada_obra:   c.finalizada_obra,
       agendadas:         c.agendado,
       aprovadas,
+      aprovadas1a:       c.aprovada_1a,
+      aprovadas2a:       c.aprovada_2a_mais,
+      pctAprov1a,
+      pctAprov2a,
+      emRevistoria,
+      emCorrecaoPos:     c.em_correcao_pos_reprovacao,
+      prontaRevist:      c.pronta_revistoria,
       reprovadas:        c.reprovada,
       reagendadas:       c.revistoria,
       entregues:         c.entregue,
@@ -117,6 +129,38 @@ export default function DashboardUI({
           <Mini label="Aprovadas 1ª" valor={geral.aprovHist} />
           <Mini label="Reprovadas 1ª" valor={geral.reprovHist} />
           <Mini label="Total 1ª executadas" valor={geral.aprovHist + geral.reprovHist} />
+        </div>
+      </section>
+
+      {/* QUALIDADE — 1ª vez x revistoria (sobre as aprovadas atuais) + pipeline pos-reprovacao */}
+      <section className="rounded-xl border bg-white p-6 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-4 sm:gap-8">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-gray-500">Qualidade — aprovação de primeira</div>
+            <div className="flex items-baseline gap-2 mt-1">
+              <div className="text-5xl font-semibold tracking-tight">{geral.pctAprov1a}%</div>
+              <div className="text-sm text-gray-500">das {geral.aprovadas} aprovadas passaram de 1ª</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3 sm:gap-6 text-xs flex-1">
+            <Mini label="Aprovadas na 1ª"  valor={geral.aprovadas1a} sufixo={`${geral.pctAprov1a}%`} />
+            <Mini label="Aprovadas na 2ª+" valor={geral.aprovadas2a} sufixo={`${geral.pctAprov2a}%`} />
+            <Mini label="Total aprovadas"  valor={geral.aprovadas} />
+          </div>
+        </div>
+
+        {/* Pipeline: ja reprovadas, ainda serao aprovadas na 2a vistoria */}
+        <div className="pt-4 border-t flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
+          <div className="text-sm">
+            <span className="text-2xl font-semibold text-red-600 align-middle">{geral.emRevistoria}</span>
+            <span className="text-gray-500 ml-2">reprovadas em andamento — irão para a 2ª vistoria</span>
+          </div>
+          <div className="grid grid-cols-4 gap-2 sm:gap-3 text-xs flex-1">
+            <Mini label="Reprovada"          valor={geral.reprovadas} />
+            <Mini label="Em correção"        valor={geral.emCorrecaoPos} />
+            <Mini label="Pronta p/ revist."  valor={geral.prontaRevist} />
+            <Mini label="Em revistoria"      valor={geral.reagendadas} />
+          </div>
         </div>
       </section>
 
@@ -203,11 +247,14 @@ function CardNumero({ label, valor, cor }: { label: string; valor: number; cor: 
     </div>
   );
 }
-function Mini({ label, valor }: { label: string; valor: number }) {
+function Mini({ label, valor, sufixo }: { label: string; valor: number; sufixo?: string }) {
   return (
     <div className="bg-gray-50 border rounded-lg p-3">
       <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
-      <div className="text-xl font-semibold mt-0.5">{valor}</div>
+      <div className="flex items-baseline gap-1.5 mt-0.5">
+        <div className="text-xl font-semibold">{valor}</div>
+        {sufixo && <div className="text-xs text-gray-500">{sufixo}</div>}
+      </div>
     </div>
   );
 }

@@ -141,6 +141,19 @@ async function rowsKpi(supabase: ReturnType<typeof createClient>, obraId: string
   const { data } = await supabase.from("vw_central_aprovacao" as any).select("*").eq("obra_id", obraId).maybeSingle();
   if (!data) return { rows: [], abaNome: "KPIs" };
   const k = data as any;
+  const aprov1a = Number(k.aprovadas_1a_atual) || 0;
+  const aprov2a = Number(k.aprovadas_2a_mais) || 0;
+  const totalAprov = aprov1a + aprov2a;
+  const pct1a = totalAprov ? Math.round((aprov1a / totalAprov) * 100) : 0;
+  const pct2a = totalAprov ? 100 - pct1a : 0;
+
+  // Pipeline pos-reprovacao (contagem crua: a view nao expoe os status pos-reprovacao)
+  const { data: pipe } = await supabase.from("unidades")
+    .select("status").eq("obra_id", obraId)
+    .in("status", ["reprovada", "em_correcao_pos_reprovacao", "pronta_revistoria", "revistoria"]);
+  const pc = { reprovada: 0, em_correcao_pos_reprovacao: 0, pronta_revistoria: 0, revistoria: 0 } as Record<string, number>;
+  for (const u of (pipe ?? []) as { status: string }[]) pc[u.status] = (pc[u.status] ?? 0) + 1;
+  const emRevistoria = pc.reprovada + pc.em_correcao_pos_reprovacao + pc.pronta_revistoria + pc.revistoria;
   const rows = [
     { Metrica: "Obra",                              Valor: k.obra },
     { Metrica: "Taxa aprovacao 1a (oficial)",       Valor: `${k.taxa_aprovacao_1a_oficial}%` },
@@ -151,12 +164,22 @@ async function rowsKpi(supabase: ReturnType<typeof createClient>, obraId: string
     { Metrica: "Em correcao",                       Valor: k.em_correcao },
     { Metrica: "Finalizada obra",                   Valor: k.finalizada_obra },
     { Metrica: "Agendadas",                         Valor: k.agendadas },
-    { Metrica: "Aprovadas 1a (atual)",              Valor: k.aprovadas_1a_atual },
+    { Metrica: "Aprovadas 1a (atual)",              Valor: aprov1a },
     { Metrica: "Reprovadas (atual)",                Valor: k.reprovadas_atual },
     { Metrica: "Revistorias",                       Valor: k.revistorias },
-    { Metrica: "Aprovadas 2a+ (atual)",             Valor: k.aprovadas_2a_mais },
+    { Metrica: "Aprovadas 2a+ (atual)",             Valor: aprov2a },
     { Metrica: "Entregues",                         Valor: k.entregues },
-    { Metrica: "Vistoriadas (atual)",               Valor: k.vistoriadas }
+    { Metrica: "Vistoriadas (atual)",               Valor: k.vistoriadas },
+    // Qualidade: distribuicao das aprovadas entre 1a vez e revistoria
+    { Metrica: "Total aprovadas (atual)",           Valor: totalAprov },
+    { Metrica: "% aprovadas na 1a vistoria",        Valor: `${pct1a}%` },
+    { Metrica: "% aprovadas na 2a+ (revistoria)",   Valor: `${pct2a}%` },
+    // Pipeline: ja reprovadas, ainda serao aprovadas na 2a vistoria
+    { Metrica: "Reprovadas em andamento (rumo a 2a)", Valor: emRevistoria },
+    { Metrica: "  - reprovada (aguardando)",        Valor: pc.reprovada },
+    { Metrica: "  - em correcao pos-reprovacao",    Valor: pc.em_correcao_pos_reprovacao },
+    { Metrica: "  - pronta para revistoria",        Valor: pc.pronta_revistoria },
+    { Metrica: "  - em revistoria (reagendada)",    Valor: pc.revistoria }
   ];
   return { rows, abaNome: "KPIs" };
 }
